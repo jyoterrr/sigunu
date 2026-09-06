@@ -1,15 +1,24 @@
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { prisma } from '../db/client.js';
-import { validateScoringConfig } from '@sigunu/shared';
+import { validateScoringConfig, validateQuestionMedia } from '@sigunu/shared';
 import type { QuizQuestion, PublicQuestion, QuestionMedia, QuizOption } from '@sigunu/shared';
+
+const transformSchema = z.object({
+  xPct: z.number(),
+  yPct: z.number(),
+  widthPct: z.number(),
+  rotationDeg: z.number(),
+  z: z.number(),
+});
 
 const mediaSchema = z.object({
   id: z.string().default(() => nanoid(10)),
-  type: z.enum(['image', 'video']),
+  kind: z.enum(['image', 'video', 'audio']),
   url: z.string().min(1),
   posterUrl: z.string().optional(),
   caption: z.string().optional(),
+  transform: transformSchema.optional(),
 });
 
 const optionSchema = z.object({
@@ -39,7 +48,11 @@ export const questionInputSchema = z
       q.wrongPenalty == null ||
       validateScoringConfig({ correctPoints: q.correctPoints, wrongPenalty: q.wrongPenalty }) === null,
     { message: 'Invalid per-question scoring.', path: ['correctPoints'] }
-  );
+  )
+  .refine((q) => validateQuestionMedia(q.media as never) === null, {
+    message: 'A question can have at most one video.',
+    path: ['media'],
+  });
 
 export type QuestionInput = z.infer<typeof questionInputSchema>;
 

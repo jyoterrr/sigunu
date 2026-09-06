@@ -60,17 +60,42 @@ export interface QuizOption {
   text: string;
 }
 
+export type MediaKind = 'image' | 'video' | 'audio';
+
 /**
- * Media attached to a question (manual questions can carry several images and/or
- * videos — Section: manual builder). `url` is served by the API's static uploads
- * route; `posterUrl` is an optional still frame for a video.
+ * Layout transform for a collage IMAGE, normalized to a fixed-aspect stage so the
+ * arrangement renders identically on every player's screen (Addendum §1).
+ * Positions/sizes are percentages of the stage; rotation is any angle in degrees.
+ */
+export interface MediaTransform {
+  xPct: number; // 0–100, top-left x within the stage
+  yPct: number; // 0–100, top-left y within the stage
+  widthPct: number; // 0–100, width as % of stage width (height follows natural ratio)
+  rotationDeg: number; // free rotation, any angle
+  z: number; // stacking order within the collage
+}
+
+/**
+ * Media attached to a question. Manual questions can carry multiple images and/or
+ * audio clips and at most one video (Addendum §1). `url` is served by the API's
+ * static uploads route; `posterUrl` is an optional still frame for a video.
+ * `transform` is present for collage images; video/audio use simple fixed placement.
  */
 export interface QuestionMedia {
   id: string;
-  type: 'image' | 'video';
+  kind: MediaKind;
   url: string;
   posterUrl?: string;
   caption?: string;
+  transform?: MediaTransform;
+}
+
+/** At most one video per question (Addendum §1). */
+export function validateQuestionMedia(media: QuestionMedia[]): string | null {
+  if (media.filter((m) => m.kind === 'video').length > 1) {
+    return 'A question can have at most one video.';
+  }
+  return null;
 }
 
 export interface QuizQuestion {
@@ -151,6 +176,23 @@ export interface Leaderboard {
   updatedAt: string; // ISO
 }
 
+/**
+ * A manual score override applied by the quiz master (Addendum §2), independent of
+ * automatic correct/incorrect scoring. `delta` may be any integer (positive or
+ * negative — the "award positive / penalty non-negative" rule applies ONLY to
+ * automatic scoring). `subjectKey` matches a leaderboard key: `team:<id>`/`solo:<id>`.
+ * Reversed entries stay in the log (active=false) for the host-only audit trail.
+ */
+export interface ScoreAdjustment {
+  id: string;
+  subjectKey: string;
+  subjectName: string;
+  delta: number;
+  reason: string | null;
+  active: boolean;
+  createdAt: string; // ISO
+}
+
 // ---------------------------------------------------------------------------
 // Socket.IO event contract (server is authoritative)
 // ---------------------------------------------------------------------------
@@ -181,6 +223,32 @@ export interface ClientToServerEvents {
   'host:reveal': (p: { questionId: string }, ack: (res: Ack<QuestionResult>) => void) => void;
   'host:next': (p: Record<string, never>, ack: (res: Ack<null>) => void) => void;
   'host:end': (p: Record<string, never>, ack: (res: Ack<null>) => void) => void;
+
+  /** Manual score override (Addendum §2). Returns the created adjustment + fresh board. */
+  'host:adjust-score': (
+    p: { subjectKey: string; delta: number; reason?: string },
+    ack: (res: Ack<{ adjustment: ScoreAdjustment; leaderboard: Leaderboard }>) => void
+  ) => void;
+  /** Undo a prior adjustment (marks it inactive; leaderboard recomputed). */
+  'host:undo-adjustment': (
+    p: { adjustmentId: string },
+    ack: (res: Ack<{ leaderboard: Leaderboard }>) => void
+  ) => void;
+
+  /** Quiz-master-synchronized audio playback for a question's audio clip (Addendum §1). */
+  'host:audio-control': (
+    p: { questionId: string; mediaId: string; action: 'play' | 'pause'; positionSec: number },
+    ack: (res: Ack<null>) => void
+  ) => void;
+}
+
+/** Broadcast so every client plays/pauses the same question audio in sync. */
+export interface AudioControl {
+  questionId: string;
+  mediaId: string;
+  action: 'play' | 'pause';
+  positionSec: number;
+  atServerTime: number; // Date.now() on the server when issued, for drift correction
 }
 
 /**
@@ -205,6 +273,7 @@ export interface ServerToClientEvents {
   'leaderboard:update': (l: Leaderboard) => void;
   'participants:update': (p: { participants: ParticipantView[]; teams: TeamView[] }) => void;
   'audio:directive': (d: AudioDirective) => void;
+  'audio:control': (c: AudioControl) => void;
   'error': (p: { message: string }) => void;
 }
 

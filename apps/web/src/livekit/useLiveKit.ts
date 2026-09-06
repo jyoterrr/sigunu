@@ -16,6 +16,10 @@ export interface UseLiveKit {
   toggleCamera: () => Promise<void>;
   /** Apply the authoritative audio directive from the server (team-only privacy). */
   applyAudioDirective: (d: AudioDirective) => Promise<void>;
+  /** Participant ids currently speaking (LiveKit active-speaker detection). */
+  speakingIds: Set<string>;
+  /** Participant ids ordered by most-recently-active speech (newest first). */
+  speakerRecency: string[];
 }
 
 /**
@@ -33,6 +37,9 @@ export function useLiveKit(url: string | null, token: string | null): UseLiveKit
   const [connected, setConnected] = useState(false);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [cameraOn, setCameraOn] = useState(false);
+  const [speakingIds, setSpeakingIds] = useState<Set<string>>(new Set());
+  const [speakerRecency, setSpeakerRecency] = useState<string[]>([]);
+  const recencyRef = useRef<Map<string, number>>(new Map());
   const lastDirective = useRef<AudioDirective | null>(null);
 
   useEffect(() => {
@@ -58,7 +65,17 @@ export function useLiveKit(url: string | null, token: string | null): UseLiveKit
       .on(RoomEvent.TrackPublished, refresh)
       .on(RoomEvent.TrackUnpublished, refresh)
       .on(RoomEvent.LocalTrackPublished, refresh)
-      .on(RoomEvent.LocalTrackUnpublished, refresh);
+      .on(RoomEvent.LocalTrackUnpublished, refresh)
+      // Active-speaker detection drives the teammate speaker panel (Addendum §3).
+      .on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        const now = Date.now();
+        const ids = new Set(speakers.map((s) => s.identity));
+        setSpeakingIds(ids);
+        for (const id of ids) recencyRef.current.set(id, now);
+        setSpeakerRecency(
+          [...recencyRef.current.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id)
+        );
+      });
 
     // autoSubscribe:false — tiles opt in via useAdaptiveSubscription.
     r.connect(url, token, { autoSubscribe: false })
@@ -87,7 +104,16 @@ export function useLiveKit(url: string | null, token: string | null): UseLiveKit
     [room]
   );
 
-  return { room, connected, participants, cameraOn, toggleCamera, applyAudioDirective };
+  return {
+    room,
+    connected,
+    participants,
+    cameraOn,
+    toggleCamera,
+    applyAudioDirective,
+    speakingIds,
+    speakerRecency,
+  };
 }
 
 async function applyDirective(room: Room, d: AudioDirective) {

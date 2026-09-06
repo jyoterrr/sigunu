@@ -7,6 +7,7 @@ import { lockAnswer, getLockedAnswer, LockError } from '../game/locking.js';
 import { rosterOf } from '../game/sessions.js';
 import { toQuizQuestion, toPublicQuestion } from '../game/questions.js';
 import { computeLeaderboard } from '../leaderboard/leaderboard.js';
+import { applyAdjustment, undoAdjustment } from '../game/adjustments.js';
 import { computeAudioDirective } from '../livekit/permissions.js';
 import { env } from '../env.js';
 
@@ -193,6 +194,49 @@ export function registerSocketHandlers(io: SigunuServer) {
       } catch (e) {
         ack({ ok: false, error: errMsg(e) });
       }
+    });
+
+    // -- Manual score override (Addendum §2): apply / undo, then broadcast board. --
+    socket.on('host:adjust-score', async ({ subjectKey, delta, reason }, ack) => {
+      if (!requireHost(ack)) return;
+      try {
+        const adjustment = await applyAdjustment({
+          sessionId: socket.data.sessionId,
+          subjectKey,
+          delta,
+          reason,
+        });
+        const leaderboard = await computeLeaderboard(socket.data.sessionId);
+        io.to(roomFor(socket.data.sessionId)).emit('leaderboard:update', leaderboard);
+        ack({ ok: true, data: { adjustment, leaderboard } });
+      } catch (e) {
+        ack({ ok: false, error: errMsg(e) });
+      }
+    });
+
+    socket.on('host:undo-adjustment', async ({ adjustmentId }, ack) => {
+      if (!requireHost(ack)) return;
+      try {
+        await undoAdjustment(socket.data.sessionId, adjustmentId);
+        const leaderboard = await computeLeaderboard(socket.data.sessionId);
+        io.to(roomFor(socket.data.sessionId)).emit('leaderboard:update', leaderboard);
+        ack({ ok: true, data: { leaderboard } });
+      } catch (e) {
+        ack({ ok: false, error: errMsg(e) });
+      }
+    });
+
+    // -- Quiz-master-synchronized audio playback (Addendum §1). --
+    socket.on('host:audio-control', async ({ questionId, mediaId, action, positionSec }, ack) => {
+      if (!requireHost(ack)) return;
+      io.to(roomFor(socket.data.sessionId)).emit('audio:control', {
+        questionId,
+        mediaId,
+        action,
+        positionSec,
+        atServerTime: Date.now(),
+      });
+      ack({ ok: true, data: null });
     });
 
     socket.on('disconnect', async () => {

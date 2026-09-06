@@ -57,8 +57,14 @@ export const api = {
       body: fd,
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Upload failed');
-    return res.json() as Promise<{ id: string; type: 'image' | 'video'; url: string }>;
+    return res.json() as Promise<{ id: string; kind: 'image' | 'video' | 'audio'; url: string }>;
   },
+
+  listAdjustments: (sessionId: string, hostToken: string) =>
+    req<{ adjustments: import('@sigunu/shared').ScoreAdjustment[] }>(
+      `/api/sessions/${sessionId}/adjustments`,
+      { hostToken }
+    ),
 
   extractPdf: async (sessionId: string, hostToken: string, file: File) => {
     const fd = new FormData();

@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import { promises as fs } from 'node:fs';
 import { createReadStream } from 'node:fs';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import { Server } from 'socket.io';
 import { env } from './env.js';
@@ -35,8 +36,33 @@ async function main() {
       : ext === '.png' ? 'image/png'
       : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
       : ext === '.gif' ? 'image/gif'
+      : ext === '.mp3' ? 'audio/mpeg'
+      : ext === '.wav' ? 'audio/wav'
+      : ext === '.ogg' ? 'audio/ogg'
+      : ext === '.m4a' ? 'audio/mp4'
       : 'application/octet-stream';
+
+    // Range support so audio/video can seek (needed for synced audio + video scrubbing).
+    const size = statSync(full).size;
+    const range = req.headers.range;
+    reply.header('Accept-Ranges', 'bytes');
     reply.header('Content-Type', mime);
+
+    if (range) {
+      const match = /bytes=(\d*)-(\d*)/.exec(range);
+      const start = match && match[1] ? parseInt(match[1], 10) : 0;
+      const end = match && match[2] ? parseInt(match[2], 10) : size - 1;
+      if (start >= size || end >= size) {
+        return reply.code(416).header('Content-Range', `bytes */${size}`).send();
+      }
+      reply
+        .code(206)
+        .header('Content-Range', `bytes ${start}-${end}/${size}`)
+        .header('Content-Length', end - start + 1);
+      return reply.send(createReadStream(full, { start, end }));
+    }
+
+    reply.header('Content-Length', size);
     return reply.send(createReadStream(full));
   });
 

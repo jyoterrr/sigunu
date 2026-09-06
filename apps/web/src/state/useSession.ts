@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  AudioControl,
   AudioDirective,
   AudioState,
   Leaderboard,
@@ -33,7 +34,17 @@ export interface SessionState {
     reveal: (questionId: string) => Promise<void>;
     next: () => Promise<void>;
     end: () => Promise<void>;
+    adjustScore: (subjectKey: string, delta: number, reason?: string) => Promise<void>;
+    undoAdjustment: (adjustmentId: string) => Promise<void>;
+    audioControl: (
+      questionId: string,
+      mediaId: string,
+      action: 'play' | 'pause',
+      positionSec: number
+    ) => Promise<void>;
   };
+  /** Latest synchronized audio-control command from the host (for players to apply). */
+  audioControl: AudioControl | null;
 }
 
 const EMPTY_LB: Leaderboard = { entries: [], updatedAt: new Date().toISOString() };
@@ -62,6 +73,7 @@ export function useSession(params: {
   const [lockedAnswer, setLockedAnswer] = useState<LockedAnswer | null>(null);
   const [lastResult, setLastResult] = useState<QuestionResult | null>(null);
   const [leaderboard, setLeaderboard] = useState<Leaderboard>(EMPTY_LB);
+  const [audioControl, setAudioControl] = useState<AudioControl | null>(null);
 
   const directiveCb = useRef(onAudioDirective);
   directiveCb.current = onAudioDirective;
@@ -117,6 +129,7 @@ export function useSession(params: {
       setTeams(teams);
     });
     socket.on('audio:directive', (d) => directiveCb.current?.(d));
+    socket.on('audio:control', (c) => setAudioControl(c));
     socket.on('error', ({ message }) => message && setError(message));
 
     return () => {
@@ -152,6 +165,18 @@ export function useSession(params: {
     end: useCallback(async () => {
       await emitAck(socketRef.current!, 'host:end', {});
     }, []),
+    adjustScore: useCallback(async (subjectKey: string, delta: number, reason?: string) => {
+      await emitAck(socketRef.current!, 'host:adjust-score', { subjectKey, delta, reason });
+    }, []),
+    undoAdjustment: useCallback(async (adjustmentId: string) => {
+      await emitAck(socketRef.current!, 'host:undo-adjustment', { adjustmentId });
+    }, []),
+    audioControl: useCallback(
+      async (questionId: string, mediaId: string, action: 'play' | 'pause', positionSec: number) => {
+        await emitAck(socketRef.current!, 'host:audio-control', { questionId, mediaId, action, positionSec });
+      },
+      []
+    ),
   };
 
   return {
@@ -168,5 +193,6 @@ export function useSession(params: {
     lockAnswer,
     setAudioState,
     host,
+    audioControl,
   };
 }

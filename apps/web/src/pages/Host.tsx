@@ -8,6 +8,8 @@ import { useSession } from '../state/useSession';
 import { VideoGrid } from '../components/VideoGrid';
 import { Leaderboard } from '../components/Leaderboard';
 import { AudioVideoControls } from '../components/AudioVideoControls';
+import { ScoreOverridePanel } from '../components/ScoreOverridePanel';
+import { SyncedAudioPlayer } from '../components/SyncedAudioPlayer';
 
 export function Host() {
   const { sessionId = '' } = useParams();
@@ -102,8 +104,25 @@ export function Host() {
                     </li>
                   ))}
                 </ul>
+                {currentFull.media.some((m) => m.kind === 'audio') && (
+                  <div className="host-audio">
+                    <span className="control-label">Audio (plays for everyone in sync)</span>
+                    {currentFull.media.filter((m) => m.kind === 'audio').map((a) => (
+                      <div key={a.id} className="host-audio-row">
+                        <span>🔊 {a.caption ?? 'audio'}</span>
+                        <button onClick={() => session.host.audioControl(currentFull.id, a.id, 'play', 0)}>▶ Play</button>
+                        <button onClick={() => session.host.audioControl(currentFull.id, a.id, 'pause', 0)}>⏸ Pause</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
+            {/* Host hears the synced audio via its own broadcast */}
+            <SyncedAudioPlayer
+              audios={currentFull?.media.filter((m) => m.kind === 'audio') ?? []}
+              control={session.audioControl}
+            />
 
             <h4>Questions</h4>
             {questions.length === 0 ? (
@@ -124,6 +143,14 @@ export function Host() {
               </ol>
             )}
           </div>
+
+          <ScoreOverridePanel
+            sessionId={sessionId}
+            hostToken={hc.hostToken}
+            leaderboard={session.leaderboard}
+            onAdjust={session.host.adjustScore}
+            onUndo={session.host.undoAdjustment}
+          />
         </section>
 
         <Leaderboard leaderboard={session.leaderboard} />

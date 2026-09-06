@@ -19,6 +19,7 @@ import {
   questionInputSchema,
 } from './game/questions.js';
 import { extractQuizFromPdf } from './ai/extract.js';
+import { listAdjustments } from './game/adjustments.js';
 import { validateScoringConfig } from '@sigunu/shared';
 
 export const UPLOADS_DIR = path.resolve(process.cwd(), 'apps/server/uploads');
@@ -119,18 +120,28 @@ export async function registerRoutes(app: FastifyInstance) {
     await requireHost(id, hostTokenOf(req));
     const file = await (req as any).file();
     if (!file) throw new HttpError(400, 'No file uploaded.');
-    const type = file.mimetype.startsWith('video/')
+    const kind: 'image' | 'video' | 'audio' | null = file.mimetype.startsWith('video/')
       ? 'video'
       : file.mimetype.startsWith('image/')
         ? 'image'
-        : null;
-    if (!type) throw new HttpError(400, 'Only image or video files are allowed.');
+        : file.mimetype.startsWith('audio/')
+          ? 'audio'
+          : null;
+    if (!kind) throw new HttpError(400, 'Only image, video, or audio files are allowed.');
 
-    const ext = path.extname(file.filename) || (type === 'video' ? '.mp4' : '.png');
+    const defaultExt = kind === 'video' ? '.mp4' : kind === 'audio' ? '.mp3' : '.png';
+    const ext = path.extname(file.filename) || defaultExt;
     const name = `${id}-${nanoid(10)}${ext}`;
     const dest = path.join(UPLOADS_DIR, name);
     await fs.writeFile(dest, await file.toBuffer());
-    return { id: nanoid(10), type, url: `/uploads/${name}` };
+    return { id: nanoid(10), kind, url: `/uploads/${name}` };
+  });
+
+  // --- Manual score-override audit log (host-only, Addendum §2) ---
+  app.get('/api/sessions/:id/adjustments', async (req) => {
+    const { id } = req.params as { id: string };
+    await requireHost(id, hostTokenOf(req));
+    return { adjustments: await listAdjustments(id) };
   });
 
   // --- AI PDF extraction (extraction only) ---

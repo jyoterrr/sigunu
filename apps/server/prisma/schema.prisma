@@ -35,6 +35,27 @@ model Session {
   participants Participant[]
   teams        Team[]
   answers      LockedAnswer[]
+  adjustments  ScoreAdjustment[]
+}
+
+// Manual score override + audit log (Addendum §2). Host-only. `delta` may be any
+// integer (positive or negative). Undo sets active=false rather than deleting, so
+// the host-only audit trail is preserved.
+model ScoreAdjustment {
+  id        String  @id @default(cuid())
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Leaderboard subject key: "team:<teamId>" or "solo:<participantId>".
+  subjectKey  String
+  subjectName String
+  delta       Int
+  reason      String?
+  active      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@index([sessionId, active])
 }
 
 model Question {

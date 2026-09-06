@@ -92,6 +92,17 @@ export async function computeLeaderboard(sessionId: string): Promise<Leaderboard
     }
   }
 
+  // Apply manual score overrides (Addendum §2): sum active adjustments per subject,
+  // on top of the automatic scoring. These may be positive or negative.
+  const adjustments = await prisma.scoreAdjustment.findMany({
+    where: { sessionId, active: true },
+    select: { subjectKey: true, delta: true },
+  });
+  for (const adj of adjustments) {
+    const entry = scores.get(adj.subjectKey);
+    if (entry) entry.score += adj.delta;
+  }
+
   const entries = [...scores.values()].sort(
     (a, b) => b.score - a.score || a.name.localeCompare(b.name)
   );

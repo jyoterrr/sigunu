@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import type { QuizQuestion, QuestionMedia } from '@sigunu/shared';
 import { api } from '../lib/api';
 import { creds } from '../lib/creds';
+import { ImageCollageEditor } from '../components/ImageCollageEditor';
+import { QuestionMediaStage, mediaSrc } from '../components/QuestionMediaStage';
 
 interface Draft {
   id?: string;
@@ -37,7 +39,9 @@ export function Builder() {
   const [cfg, setCfg] = useState({ defaultCorrectPoints: 10, defaultWrongPenalty: 0, unansweredPolicy: 'zero' as 'zero' | 'penalty' });
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  const imgRef = useRef<HTMLInputElement | null>(null);
+  const videoRef = useRef<HTMLInputElement | null>(null);
+  const audioRef = useRef<HTMLInputElement | null>(null);
   const pdfRef = useRef<HTMLInputElement | null>(null);
 
   const load = async () => {
@@ -51,31 +55,72 @@ export function Builder() {
   const ht = hc.hostToken;
 
   const setField = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
+  const setMedia = (m: QuestionMedia[]) => setField('media', m);
 
   const addOption = () => setField('options', [...draft.options, { id: uid(), text: '' }]);
-  const removeOption = (id: string) =>
-    setField('options', draft.options.filter((o) => o.id !== id));
+  const removeOption = (id: string) => setField('options', draft.options.filter((o) => o.id !== id));
   const setOptionText = (id: string, text: string) =>
     setField('options', draft.options.map((o) => (o.id === id ? { ...o, text } : o)));
 
-  const uploadMedia = async (files: FileList | null) => {
+  const uploadImages = async (files: FileList | null) => {
+    if (!files) return;
+    setErr(null);
+    try {
+      const existing = draft.media.filter((m) => m.kind === 'image').length;
+      const added: QuestionMedia[] = [];
+      let i = existing;
+      for (const f of Array.from(files)) {
+        const m = await api.uploadMedia(sessionId, ht, f);
+        // Stagger new images so they don't stack exactly on top of each other.
+        added.push({
+          id: m.id,
+          kind: 'image',
+          url: m.url,
+          transform: { xPct: 8 + ((i * 10) % 55), yPct: 8 + ((i * 12) % 45), widthPct: 38, rotationDeg: 0, z: i },
+        });
+        i++;
+      }
+      setMedia([...draft.media, ...added]);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Upload failed.');
+    }
+  };
+
+  const uploadVideo = async (files: FileList | null) => {
+    if (!files || !files[0]) return;
+    setErr(null);
+    try {
+      const m = await api.uploadMedia(sessionId, ht, files[0]);
+      // Only one video per question — replace any existing.
+      const withoutVideo = draft.media.filter((x) => x.kind !== 'video');
+      setMedia([...withoutVideo, { id: m.id, kind: 'video', url: m.url }]);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Upload failed.');
+    }
+  };
+
+  const uploadAudio = async (files: FileList | null) => {
     if (!files) return;
     setErr(null);
     try {
       const added: QuestionMedia[] = [];
       for (const f of Array.from(files)) {
         const m = await api.uploadMedia(sessionId, ht, f);
-        added.push({ id: m.id, type: m.type, url: m.url });
+        added.push({ id: m.id, kind: 'audio', url: m.url, caption: f.name });
       }
-      setField('media', [...draft.media, ...added]);
+      setMedia([...draft.media, ...added]);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Upload failed.');
     }
   };
 
+  const video = draft.media.find((m) => m.kind === 'video');
+  const audios = draft.media.filter((m) => m.kind === 'audio');
+
   const validate = (d: Draft): string | null => {
     if (!d.text.trim()) return 'Question text is required.';
     if (d.options.length < 2 || d.options.some((o) => !o.text.trim())) return 'Provide at least two non-empty options.';
+    if (d.media.filter((m) => m.kind === 'video').length > 1) return 'Only one video per question.';
     if (d.correctPoints != null && d.correctPoints <= 0) return 'Correct points must be positive.';
     if (d.wrongPenalty != null && d.wrongPenalty < 0) return 'Wrong penalty cannot be negative.';
     return null;
@@ -156,7 +201,7 @@ export function Builder() {
 
       <div className="builder-grid">
         <div>
-          {/* Scoring config (Section 9) */}
+          {/* Scoring config */}
           <div className="panel">
             <h3>Scoring defaults</h3>
             <label>Correct points (must be &gt; 0)
@@ -176,37 +221,84 @@ export function Builder() {
             <button onClick={saveConfig}>Save scoring</button>
           </div>
 
-          {/* PDF import (extraction only) */}
+          {/* PDF import */}
           <div className="panel">
             <h3>Import from PDF</h3>
-            <p className="muted">Extracts the questions/options already in your PDF (works for text or scanned PDFs). It never invents content — review afterward and set any missing correct answers.</p>
+            <p className="muted">Extracts the questions/options already in your PDF (text or scanned). It never invents content — review afterward and set any missing correct answers.</p>
             <input ref={pdfRef} type="file" accept="application/pdf" hidden onChange={(e) => importPdf(e.target.files?.[0] ?? null)} />
             <button onClick={() => pdfRef.current?.click()}>Upload PDF</button>
           </div>
+
+          {/* Live preview */}
+          <div className="panel">
+            <h3>Live preview</h3>
+            <p className="muted">Exactly how players will see it.</p>
+            <div className="preview-card">
+              <div className="preview-q">{draft.text || 'Your question text…'}</div>
+              <QuestionMediaStage media={draft.media} className="preview-media" />
+              {audios.length > 0 && <div className="preview-audio">🔊 {audios.length} audio clip(s) — host-triggered</div>}
+              <div className="preview-options">
+                {draft.options.map((o) => (
+                  <div key={o.id} className={`preview-opt ${draft.correctOptionId === o.id ? 'correct' : ''}`}>
+                    {o.text || 'Option'}{draft.correctOptionId === o.id && ' ✓'}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Question editor */}
+        {/* Editor */}
         <div className="panel editor">
           <h3>{draft.id ? 'Edit question' : 'Add a question'}</h3>
           <label>Question text
             <textarea value={draft.text} onChange={(e) => setField('text', e.target.value)} rows={2} />
           </label>
 
-          <div className="media-editor">
-            <div className="media-row">
-              {draft.media.map((m) => (
-                <div key={m.id} className="media-thumb">
-                  {m.type === 'image'
-                    ? <img src={(import.meta.env.VITE_API_URL || '') + m.url} alt="" />
-                    : <video src={(import.meta.env.VITE_API_URL || '') + m.url} muted />}
-                  <button className="x" onClick={() => setField('media', draft.media.filter((x) => x.id !== m.id))}>×</button>
-                </div>
-              ))}
-            </div>
-            <input ref={fileRef} type="file" accept="image/*,video/*" multiple hidden onChange={(e) => uploadMedia(e.target.files)} />
-            <button onClick={() => fileRef.current?.click()}>Add images / videos</button>
+          {/* Image collage editor */}
+          <div className="control-label">Images — drag · resize · rotate to arrange a collage</div>
+          <ImageCollageEditor images={draft.media} onChange={setMedia} />
+          <div className="media-actions">
+            <input ref={imgRef} type="file" accept="image/*" multiple hidden onChange={(e) => uploadImages(e.target.files)} />
+            <button onClick={() => imgRef.current?.click()}>Add images</button>
+            {draft.media.some((m) => m.kind === 'image') && (
+              <button className="btn-link" onClick={() => setMedia(draft.media.filter((m) => m.kind !== 'image'))}>Clear images</button>
+            )}
           </div>
 
+          {/* Single video */}
+          <div className="control-label">Video (one per question)</div>
+          <div className="media-actions">
+            <input ref={videoRef} type="file" accept="video/*" hidden onChange={(e) => uploadVideo(e.target.files)} />
+            {video ? (
+              <div className="media-thumb">
+                <video src={mediaSrc(video.url)} muted />
+                <button className="x" onClick={() => setMedia(draft.media.filter((m) => m.kind !== 'video'))}>×</button>
+              </div>
+            ) : (
+              <button onClick={() => videoRef.current?.click()}>Add video</button>
+            )}
+          </div>
+
+          {/* Audio (multiple, host-synced playback) */}
+          <div className="control-label">Audio clips (mp3) — played in sync by the quiz master</div>
+          <div className="media-actions">
+            <input ref={audioRef} type="file" accept="audio/*" multiple hidden onChange={(e) => uploadAudio(e.target.files)} />
+            <button onClick={() => audioRef.current?.click()}>Add audio</button>
+          </div>
+          {audios.length > 0 && (
+            <ul className="audio-list">
+              {audios.map((a) => (
+                <li key={a.id}>
+                  <span>🔊 {a.caption ?? 'audio'}</span>
+                  <audio src={mediaSrc(a.url)} controls />
+                  <button className="x" onClick={() => setMedia(draft.media.filter((m) => m.id !== a.id))}>×</button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* Options */}
           <div className="options-editor">
             <span className="control-label">Options (tick the correct one)</span>
             {draft.options.map((o) => (
