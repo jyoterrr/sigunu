@@ -3,6 +3,7 @@ import {
   Room,
   RoomEvent,
   Track,
+  VideoQuality,
   type Participant,
   type RemoteParticipant,
   type RemoteTrack,
@@ -70,9 +71,13 @@ export function useLiveKit(url: string | null, token: string | null): UseLiveKit
     const refresh = () =>
       setParticipants([r.localParticipant, ...Array.from(r.remoteParticipants.values())]);
 
-    // Always subscribe to a participant's audio (privacy enforced publisher-side).
-    const subscribeAudio = (p: RemoteParticipant) => {
-      for (const pub of p.audioTrackPublications.values()) {
+    // Eagerly subscribe to ALL of a participant's tracks — audio AND video — so media
+    // is already flowing by the time a tile renders (seamless: video appears the moment
+    // someone turns on their camera, no per-tile "connecting" delay). Video has no
+    // privacy restriction; team-only AUDIO privacy is still enforced publisher-side, so
+    // the SFU simply won't forward a restricted audio track to a non-teammate.
+    const subscribeAll = (p: RemoteParticipant) => {
+      for (const pub of p.trackPublications.values()) {
         try {
           pub.setSubscribed(true);
         } catch {
@@ -85,26 +90,23 @@ export function useLiveKit(url: string | null, token: string | null): UseLiveKit
       if (cancelled) return;
       setConnected(true);
       setAudioBlocked(!r.canPlaybackAudio);
-      for (const p of r.remoteParticipants.values()) subscribeAudio(p);
+      for (const p of r.remoteParticipants.values()) subscribeAll(p);
       refresh();
     })
       .on(RoomEvent.Disconnected, () => setConnected(false))
       .on(RoomEvent.ParticipantConnected, (p) => {
-        subscribeAudio(p);
+        subscribeAll(p);
         refresh();
         if (lastDirective.current) void applyDirective(r, lastDirective.current);
       })
       .on(RoomEvent.ParticipantDisconnected, refresh)
-      .on(RoomEvent.TrackPublished, (pub, p) => {
-        // New audio track from someone — subscribe immediately so it's audible.
-        if (pub.kind === Track.Kind.Audio) {
-          try {
-            pub.setSubscribed(true);
-          } catch {
-            /* ignore */
-          }
+      .on(RoomEvent.TrackPublished, (pub) => {
+        // Any new track (camera turned on, mic on) — subscribe immediately.
+        try {
+          pub.setSubscribed(true);
+        } catch {
+          /* ignore */
         }
-        void p;
         refresh();
       })
       .on(RoomEvent.TrackUnpublished, refresh)
@@ -117,6 +119,14 @@ export function useLiveKit(url: string | null, token: string | null): UseLiveKit
               ? prev
               : [...prev, { id: pub.trackSid, track: track as RemoteAudioTrack }]
           );
+        } else if (track.kind === Track.Kind.Video) {
+          // Default eagerly-subscribed video to a low layer to bound bandwidth; a
+          // visible tile requests a higher layer for its size via useAdaptiveSubscription.
+          try {
+            pub.setVideoQuality(VideoQuality.LOW);
+          } catch {
+            /* ignore */
+          }
         }
       })
       .on(RoomEvent.TrackUnsubscribed, (_track, pub) => {
