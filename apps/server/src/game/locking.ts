@@ -62,7 +62,8 @@ export async function lockAnswer(params: {
     throw new LockError('This question is not open for answers.', 'not_open');
   }
   // Option must exist on the question (server-side validation; never trust the client).
-  const options = question.options as { id: string; text: string }[];
+  // options is stored as a JSON string (TEXT column, portable across SQLite/Postgres).
+  const options = JSON.parse((question.options as string) || '[]') as { id: string; text: string }[];
   if (!options.some((o) => o.id === optionId)) {
     throw new LockError('Unknown option for this question.', 'bad_option');
   }

@@ -1,4 +1,17 @@
-import 'node:process';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+// Load the repo-root .env (this file lives at apps/server/src/env.ts). The server
+// runs from apps/server, so the root .env would otherwise not be picked up. Also
+// try the current working directory. Both are best-effort — missing files are fine.
+const here = path.dirname(fileURLToPath(import.meta.url));
+for (const candidate of [path.resolve(here, '../../../.env'), path.resolve(process.cwd(), '.env')]) {
+  try {
+    process.loadEnvFile(candidate);
+  } catch {
+    /* no .env at this location — ignore */
+  }
+}
 
 function required(name: string): string {
   const v = process.env[name];
@@ -16,10 +29,16 @@ export const env = {
     .split(',')
     .map((s) => s.trim()),
 
+  // LiveKit is OPTIONAL: without keys the server still boots and the full quiz flow
+  // (join, teams, questions, locking, leaderboard over Socket.IO) works — only
+  // video/audio is disabled. Add keys to enable LiveKit.
   livekit: {
-    url: required('LIVEKIT_URL'),
-    apiKey: required('LIVEKIT_API_KEY'),
-    apiSecret: required('LIVEKIT_API_SECRET'),
+    url: optional('LIVEKIT_URL', ''),
+    apiKey: optional('LIVEKIT_API_KEY', ''),
+    apiSecret: optional('LIVEKIT_API_SECRET', ''),
+  },
+  get livekitEnabled(): boolean {
+    return Boolean(this.livekit.url && this.livekit.apiKey && this.livekit.apiSecret);
   },
 
   anthropic: {

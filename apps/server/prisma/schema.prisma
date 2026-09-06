@@ -7,7 +7,10 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  // SQLite for zero-setup local dev. For production at scale switch this to
+  // "postgresql" — the schema is portable (JSON is stored as TEXT below, which
+  // works identically on both), so only this line and DATABASE_URL change.
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -42,12 +45,13 @@ model Question {
   order Int
   text  String
 
-  // Ordered media shown with the question, as JSON: [{ id, type, url, posterUrl?, caption? }].
-  // Manual questions may attach multiple images and/or videos.
-  media Json @default("[]")
+  // Ordered media shown with the question, as a JSON string: [{ id, type, url, posterUrl?, caption? }].
+  // Manual questions may attach multiple images and/or videos. Stored as TEXT for
+  // cross-DB portability (SQLite + Postgres); parsed/serialised in the app layer.
+  media String @default("[]")
 
-  // Verbatim options, stored as ordered JSON: [{ id, text }]
-  options Json
+  // Verbatim options, as a JSON string: [{ id, text }]. TEXT for portability.
+  options String @default("[]")
 
   // Option id of the correct answer, or null if unknown/unmarked.
   correctOptionId String?

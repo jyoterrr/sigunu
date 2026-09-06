@@ -12,9 +12,10 @@
     "dev:server": "npm run dev -w @sigunu/server",
     "dev:web": "npm run dev -w @sigunu/web",
     "build": "npm run build -w @sigunu/shared && npm run build -w @sigunu/server && npm run build -w @sigunu/web",
-    "db:push": "npm run db:push -w @sigunu/server",
-    "db:seed": "npm run db:seed -w @sigunu/server",
-    "db:studio": "npm run db:studio -w @sigunu/server",
+    "db:push": "prisma db push --schema apps/server/prisma/schema.prisma",
+    "db:generate": "prisma generate --schema apps/server/prisma/schema.prisma",
+    "db:seed": "tsx apps/server/prisma/seed.ts",
+    "db:studio": "prisma studio --schema apps/server/prisma/schema.prisma",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {

@@ -29,6 +29,10 @@ export function encodeMetadata(id: LiveKitIdentity): string {
  * the LiveKit SFU enforces regardless of what a subscriber's client requests.
  */
 export async function mintJoinToken(roomName: string, id: LiveKitIdentity): Promise<string> {
+  // No keys configured => return an empty token; the client treats this as
+  // "video disabled" and the quiz flow proceeds over Socket.IO regardless.
+  if (!env.livekitEnabled) return '';
+
   const at = new AccessToken(env.livekit.apiKey, env.livekit.apiSecret, {
     identity: id.participantId,
     name: id.displayName,

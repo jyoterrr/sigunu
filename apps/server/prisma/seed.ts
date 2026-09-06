@@ -9,6 +9,18 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { nanoid } from 'nanoid';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+// Load the repo-root .env so DATABASE_URL is available when run from anywhere.
+const here = path.dirname(fileURLToPath(import.meta.url));
+for (const c of [path.resolve(here, '../../../.env'), path.resolve(process.cwd(), '.env')]) {
+  try {
+    process.loadEnvFile(c);
+  } catch {
+    /* ignore */
+  }
+}
 
 const prisma = new PrismaClient();
 
@@ -76,8 +88,8 @@ async function main() {
         sessionId: session.id,
         order,
         text: q.text,
-        media: [],
-        options,
+        media: JSON.stringify([]),
+        options: JSON.stringify(options),
         correctOptionId: options[q.correct].id,
         correctPoints: (q as any).correctPoints ?? null,
         wrongPenalty: (q as any).wrongPenalty ?? null,

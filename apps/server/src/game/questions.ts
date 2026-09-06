@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { prisma } from '../db/client.js';
 import { validateScoringConfig } from '@sigunu/shared';
-import type { QuizQuestion, PublicQuestion, QuestionMedia } from '@sigunu/shared';
+import type { QuizQuestion, PublicQuestion, QuestionMedia, QuizOption } from '@sigunu/shared';
 
 const mediaSchema = z.object({
   id: z.string().default(() => nanoid(10)),
@@ -54,8 +54,8 @@ export async function createQuestion(sessionId: string, input: QuestionInput): P
       sessionId,
       order,
       text: input.text,
-      media: input.media,
-      options: input.options,
+      media: JSON.stringify(input.media),
+      options: JSON.stringify(input.options),
       correctOptionId: input.correctOptionId,
       correctPoints: input.correctPoints,
       wrongPenalty: input.wrongPenalty,
@@ -75,8 +75,8 @@ export async function updateQuestion(
     where: { id: questionId },
     data: {
       text: input.text,
-      media: input.media,
-      options: input.options,
+      media: JSON.stringify(input.media),
+      options: JSON.stringify(input.options),
       correctOptionId: input.correctOptionId,
       correctPoints: input.correctPoints,
       wrongPenalty: input.wrongPenalty,
@@ -111,14 +111,23 @@ export async function importQuestions(
   return created;
 }
 
-// deno-lint-ignore no-explicit-any
+function parseJson<T>(value: unknown, fallback: T): T {
+  if (typeof value !== 'string') return (value as T) ?? fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function toQuizQuestion(row: any): QuizQuestion {
   return {
     id: row.id,
     order: row.order,
     text: row.text,
-    media: (row.media ?? []) as QuestionMedia[],
-    options: row.options,
+    media: parseJson<QuestionMedia[]>(row.media, []),
+    options: parseJson<QuizOption[]>(row.options, []),
     correctOptionId: row.correctOptionId,
     scoring:
       row.correctPoints != null && row.wrongPenalty != null
