@@ -3,6 +3,7 @@ import { prisma } from '../db/client.js';
 import { computeLeaderboard } from '../leaderboard/leaderboard.js';
 import { toQuizQuestion, toPublicQuestion } from './questions.js';
 import { roomFor, type SigunuServer } from '../realtime/io.js';
+import { roomService } from '../livekit/permissions.js';
 
 /**
  * The host-driven quiz flow. Every state change is persisted then broadcast ONCE to
@@ -83,14 +84,30 @@ export class Orchestrator {
     this.io.to(roomFor(sessionId)).emit('session:phase', { phase: 'lobby' });
   }
 
+  /** Start the quiz (Round 2 §1). Marks it started so the host UI switches to controls. */
+  async start(sessionId: string) {
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: { startedAt: new Date(), phase: 'lobby' },
+    });
+    this.io.to(roomFor(sessionId)).emit('session:phase', { phase: 'lobby' });
+  }
+
   async end(sessionId: string) {
     await prisma.session.update({
       where: { id: sessionId },
       data: { phase: 'ended', endedAt: new Date() },
     });
-    this.io.to(roomFor(sessionId)).emit('session:phase', { phase: 'ended' });
     const board = await computeLeaderboard(sessionId);
+    this.io.to(roomFor(sessionId)).emit('session:phase', { phase: 'ended' });
     this.io.to(roomFor(sessionId)).emit('leaderboard:update', board);
+    // Finalize: show players the ended screen and disconnect everyone from LiveKit.
+    this.io.to(roomFor(sessionId)).emit('session:ended', { leaderboard: board });
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { roomName: true },
+    });
+    if (session) await roomService.deleteRoom(session.roomName).catch(() => {});
   }
 
   async broadcastLeaderboard(sessionId: string) {

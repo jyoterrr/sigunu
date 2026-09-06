@@ -42,6 +42,8 @@ export interface ParticipantView {
   /** null => solo player (or the quiz master). */
   teamId: string | null;
   connected: boolean;
+  /** 'active' | 'left' — a player who used Leave Quiz is marked 'left'. */
+  status: 'active' | 'left';
 }
 
 export interface TeamView {
@@ -114,6 +116,10 @@ export interface QuizQuestion {
   scoring: ScoringConfig | null;
   /** Seconds allowed to answer; null => host reveals manually with no timer. */
   timeLimitSec: number | null;
+  /** Optional host-written hint text (never sent to players until they reveal it). */
+  hint: string | null;
+  /** Points a subject loses for revealing the hint (0 = free). */
+  hintCost: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +175,8 @@ export interface LeaderboardEntry {
   name: string;
   score: number;
   rank: number;
+  /** true when this solo player has left the quiz (Round 2 §6). */
+  left?: boolean;
 }
 
 export interface Leaderboard {
@@ -191,6 +199,28 @@ export interface ScoreAdjustment {
   reason: string | null;
   active: boolean;
   createdAt: string; // ISO
+}
+
+// ---------------------------------------------------------------------------
+// Global chat + team invites (Round 2)
+// ---------------------------------------------------------------------------
+
+/** One global-chat message, visible to everyone in the session (Round 2 §chat). */
+export interface ChatMessage {
+  id: string;
+  participantId: string;
+  name: string;
+  role: Role;
+  text: string;
+  at: string; // ISO
+}
+
+/** A pending "invite to team" (Round 2 §4). */
+export interface TeamInvite {
+  id: string;
+  fromParticipantId: string;
+  fromName: string;
+  toParticipantId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,10 +247,35 @@ export interface ClientToServerEvents {
     ack: (res: Ack<{ state: AudioState }>) => void
   ) => void;
 
+  /** Reveal a question's hint; charges the subject the question's hintCost. */
+  'hint:reveal': (p: { questionId: string }, ack: (res: Ack<{ hint: string }>) => void) => void;
+
+  /** Global chat (Round 2 §chat) — everyone sees it. */
+  'chat:send': (p: { text: string }, ack: (res: Ack<null>) => void) => void;
+
+  /** Leave the quiz entirely (Round 2 §6); marks the player 'left'. */
+  'quiz:leave': (p: Record<string, never>, ack: (res: Ack<null>) => void) => void;
+
+  /** Leave the current team and become solo (Round 2 §5); carries own points over. */
+  'team:leave': (p: Record<string, never>, ack: (res: Ack<null>) => void) => void;
+
+  /** Invite a solo (or teammate-of-none) participant to your team (Round 2 §4). */
+  'team:invite': (p: { toParticipantId: string }, ack: (res: Ack<{ inviteId: string }>) => void) => void;
+
+  /** Respond to a received invite. */
+  'team:invite-respond': (
+    p: { inviteId: string; accept: boolean },
+    ack: (res: Ack<{ needsName: boolean }>) => void
+  ) => void;
+
+  /** Requester names the new team after a solo+solo invite is accepted. */
+  'team:name-new': (p: { inviteId: string; name: string }, ack: (res: Ack<null>) => void) => void;
+
   // --- Quiz-master only (server verifies host token) ---
   'host:push-question': (p: { questionId: string }, ack: (res: Ack<QuizQuestion>) => void) => void;
   'host:lock-question': (p: { questionId: string }, ack: (res: Ack<null>) => void) => void;
   'host:reveal': (p: { questionId: string }, ack: (res: Ack<QuestionResult>) => void) => void;
+  'host:start': (p: Record<string, never>, ack: (res: Ack<null>) => void) => void;
   'host:next': (p: Record<string, never>, ack: (res: Ack<null>) => void) => void;
   'host:end': (p: Record<string, never>, ack: (res: Ack<null>) => void) => void;
 
@@ -274,11 +329,28 @@ export interface ServerToClientEvents {
   'participants:update': (p: { participants: ParticipantView[]; teams: TeamView[] }) => void;
   'audio:directive': (d: AudioDirective) => void;
   'audio:control': (c: AudioControl) => void;
+  'chat:message': (m: ChatMessage) => void;
+  /** Sent to a participant when someone invites them to a team. */
+  'team:invite-received': (p: { inviteId: string; fromName: string }) => void;
+  /** Sent to the requester when the invitee accepts a solo+solo invite: name the team. */
+  'team:name-needed': (p: { inviteId: string; inviteeName: string }) => void;
+  /** Result of an invite the requester sent (accepted/declined + a message). */
+  'team:invite-result': (p: { accepted: boolean; message: string }) => void;
+  /** A hint the subject revealed (also pushed to teammates, who share the charge). */
+  'hint:revealed': (p: { questionId: string; hint: string }) => void;
+  /** The quiz ended — players show the ended screen (Round 2 §1). */
+  'session:ended': (p: { leaderboard: Leaderboard }) => void;
   'error': (p: { message: string }) => void;
 }
 
-/** Question as sent to players — correct answer is withheld until reveal. */
-export type PublicQuestion = Omit<QuizQuestion, 'correctOptionId'>;
+/**
+ * Question as sent to players — the correct answer AND the hint text are withheld.
+ * Players see whether a hint exists (`hasHint`) and its `hintCost`, and fetch the
+ * text only by revealing it (which charges the cost).
+ */
+export type PublicQuestion = Omit<QuizQuestion, 'correctOptionId' | 'hint'> & {
+  hasHint: boolean;
+};
 
 export interface QuestionResult {
   questionId: string;
@@ -291,12 +363,17 @@ export interface QuestionResult {
 export interface SessionSnapshot {
   sessionId: string;
   phase: SessionPhase;
+  started: boolean;
   self: ParticipantView;
   participants: ParticipantView[];
   teams: TeamView[];
   currentQuestion: PublicQuestion | null;
   yourLockedAnswer: LockedAnswer | null;
   leaderboard: Leaderboard;
+  /** Recent global-chat messages so a joiner sees context. */
+  recentChat: ChatMessage[];
+  /** join code + shareable link base for the host's share panel. */
+  joinCode: string;
   livekit: { url: string; token: string; roomName: string };
 }
 

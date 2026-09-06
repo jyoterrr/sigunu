@@ -10,6 +10,9 @@ import { Leaderboard } from '../components/Leaderboard';
 import { AudioVideoControls } from '../components/AudioVideoControls';
 import { ScoreOverridePanel } from '../components/ScoreOverridePanel';
 import { SyncedAudioPlayer } from '../components/SyncedAudioPlayer';
+import { SharePanel } from '../components/SharePanel';
+import { ChatPanel } from '../components/ChatPanel';
+import { AudioRenderer, EnableAudioBanner } from '../components/AudioRenderer';
 
 export function Host() {
   const { sessionId = '' } = useParams();
@@ -67,6 +70,11 @@ export function Host() {
         {session.error && <span className="q-error">{session.error}</span>}
       </header>
 
+      {lk.mediaError && (
+        <div className="media-error-banner">{lk.mediaError} <button onClick={lk.clearMediaError}>✕</button></div>
+      )}
+      <EnableAudioBanner show={lk.audioBlocked} onEnable={lk.startAudio} />
+
       <main className="stage-main">
         <section className="stage-video">
           <VideoGrid participants={lk.participants} roster={session.participants} localId={lkCreds?.participantId ?? ''} view="grid" />
@@ -78,10 +86,20 @@ export function Host() {
             onAudio={session.setAudioState}
             onToggleCamera={lk.toggleCamera}
           />
+          <ChatPanel messages={session.chat} selfId={lkCreds?.participantId ?? ''} onSend={session.sendChat} />
         </section>
 
         <section className="stage-center">
           <div className="panel host-flow">
+            {/* Share panel (Round 2 §1): join code + link for players */}
+            <SharePanel joinCode={session.joinCode || hc.joinCode} />
+            <div className="host-lifecycle">
+              {!session.started ? (
+                <button className="primary" onClick={() => session.host.start()}>▶ Start quiz</button>
+              ) : (
+                <span className="muted small">Quiz is live.</span>
+              )}
+            </div>
             <div className="host-phase">Phase: <b>{session.phase}</b></div>
             <div className="host-actions">
               {current && session.phase === 'question_open' && (
@@ -118,7 +136,8 @@ export function Host() {
                 )}
               </div>
             )}
-            {/* Host hears the synced audio via its own broadcast */}
+            {/* Host hears players' live audio + the synced question audio */}
+            <AudioRenderer tracks={lk.audioTracks} />
             <SyncedAudioPlayer
               audios={currentFull?.media.filter((m) => m.kind === 'audio') ?? []}
               control={session.audioControl}

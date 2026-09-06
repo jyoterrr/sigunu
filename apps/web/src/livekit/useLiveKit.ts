@@ -2,43 +2,63 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Room,
   RoomEvent,
+  Track,
   type Participant,
+  type RemoteParticipant,
+  type RemoteTrack,
+  type RemoteTrackPublication,
+  type RemoteAudioTrack,
   type ParticipantTrackPermission,
 } from 'livekit-client';
 import type { AudioDirective } from '@sigunu/shared';
 import { createRoom } from './room';
 
+export interface RemoteAudioEntry {
+  id: string; // track sid
+  track: RemoteAudioTrack;
+}
+
 export interface UseLiveKit {
   room: Room | null;
   connected: boolean;
-  participants: Participant[]; // remote + local
+  participants: Participant[];
   cameraOn: boolean;
+  micOn: boolean;
   toggleCamera: () => Promise<void>;
-  /** Apply the authoritative audio directive from the server (team-only privacy). */
   applyAudioDirective: (d: AudioDirective) => Promise<void>;
-  /** Participant ids currently speaking (LiveKit active-speaker detection). */
   speakingIds: Set<string>;
-  /** Participant ids ordered by most-recently-active speech (newest first). */
   speakerRecency: string[];
+  /** Remote audio tracks to render/play (Section 2 fix — audio was never subscribed). */
+  audioTracks: RemoteAudioEntry[];
+  /** True when the browser is blocking audio playback until a user gesture. */
+  audioBlocked: boolean;
+  /** Call from a click to unblock audio playback. */
+  startAudio: () => Promise<void>;
+  /** Last media error (mic/camera permission or track failure), surfaced to the UI. */
+  mediaError: string | null;
+  clearMediaError: () => void;
 }
 
 /**
  * Manages the single LiveKit connection.
  *
- * Team-only audio (Section 5) is applied via publisher-side track subscription
- * permissions: teammates may subscribe to ALL of my tracks; everyone else may
- * subscribe ONLY to my video track sids — so my video stays visible to the whole
- * session while my audio reaches teammates alone. The quiz master is never a
- * teammate, so the SFU never forwards my team-only audio to them. We re-apply the
- * directive whenever a participant joins, since the "everyone else" set changed.
+ * AUDIO (Section 2): the room connects with autoSubscribe:false so that *video* is
+ * subscribed selectively per visible tile. Audio must NOT be selective — we subscribe
+ * to every remote audio track and play it. Team-only privacy is still enforced
+ * publisher-side (setTrackSubscriptionPermissions), so the SFU simply won't forward a
+ * team-only track to a non-teammate even though we ask to subscribe.
  */
 export function useLiveKit(url: string | null, token: string | null): UseLiveKit {
   const [room, setRoom] = useState<Room | null>(null);
   const [connected, setConnected] = useState(false);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [cameraOn, setCameraOn] = useState(false);
+  const [micOn, setMicOn] = useState(false);
   const [speakingIds, setSpeakingIds] = useState<Set<string>>(new Set());
   const [speakerRecency, setSpeakerRecency] = useState<string[]>([]);
+  const [audioTracks, setAudioTracks] = useState<RemoteAudioEntry[]>([]);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const recencyRef = useRef<Map<string, number>>(new Map());
   const lastDirective = useRef<AudioDirective | null>(null);
 
@@ -47,26 +67,65 @@ export function useLiveKit(url: string | null, token: string | null): UseLiveKit
     const r = createRoom();
     let cancelled = false;
 
-    const refresh = () => setParticipants([r.localParticipant, ...Array.from(r.remoteParticipants.values())]);
+    const refresh = () =>
+      setParticipants([r.localParticipant, ...Array.from(r.remoteParticipants.values())]);
+
+    // Always subscribe to a participant's audio (privacy enforced publisher-side).
+    const subscribeAudio = (p: RemoteParticipant) => {
+      for (const pub of p.audioTrackPublications.values()) {
+        try {
+          pub.setSubscribed(true);
+        } catch {
+          /* forbidden (team-only) — SFU refuses; safe to ignore */
+        }
+      }
+    };
 
     r.on(RoomEvent.Connected, () => {
-      if (!cancelled) {
-        setConnected(true);
-        refresh();
-      }
+      if (cancelled) return;
+      setConnected(true);
+      setAudioBlocked(!r.canPlaybackAudio);
+      for (const p of r.remoteParticipants.values()) subscribeAudio(p);
+      refresh();
     })
       .on(RoomEvent.Disconnected, () => setConnected(false))
-      .on(RoomEvent.ParticipantConnected, () => {
+      .on(RoomEvent.ParticipantConnected, (p) => {
+        subscribeAudio(p);
         refresh();
-        // Re-apply team-only permissions: the "everyone else" set just changed.
         if (lastDirective.current) void applyDirective(r, lastDirective.current);
       })
       .on(RoomEvent.ParticipantDisconnected, refresh)
-      .on(RoomEvent.TrackPublished, refresh)
+      .on(RoomEvent.TrackPublished, (pub, p) => {
+        // New audio track from someone — subscribe immediately so it's audible.
+        if (pub.kind === Track.Kind.Audio) {
+          try {
+            pub.setSubscribed(true);
+          } catch {
+            /* ignore */
+          }
+        }
+        void p;
+        refresh();
+      })
       .on(RoomEvent.TrackUnpublished, refresh)
       .on(RoomEvent.LocalTrackPublished, refresh)
       .on(RoomEvent.LocalTrackUnpublished, refresh)
-      // Active-speaker detection drives the teammate speaker panel (Addendum §3).
+      .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, pub: RemoteTrackPublication) => {
+        if (track.kind === Track.Kind.Audio) {
+          setAudioTracks((prev) =>
+            prev.some((e) => e.id === pub.trackSid)
+              ? prev
+              : [...prev, { id: pub.trackSid, track: track as RemoteAudioTrack }]
+          );
+        }
+      })
+      .on(RoomEvent.TrackUnsubscribed, (_track, pub) => {
+        setAudioTracks((prev) => prev.filter((e) => e.id !== pub.trackSid));
+      })
+      .on(RoomEvent.AudioPlaybackStatusChanged, () => setAudioBlocked(!r.canPlaybackAudio))
+      .on(RoomEvent.MediaDevicesError, (e: Error) =>
+        setMediaError(`Microphone/camera error: ${e.message}`)
+      )
       .on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
         const now = Date.now();
         const ids = new Set(speakers.map((s) => s.identity));
@@ -77,10 +136,16 @@ export function useLiveKit(url: string | null, token: string | null): UseLiveKit
         );
       });
 
-    // autoSubscribe:false — tiles opt in via useAdaptiveSubscription.
     r.connect(url, token, { autoSubscribe: false })
-      .then(() => setRoom(r))
-      .catch((e) => console.error('LiveKit connect failed', e));
+      .then(() => {
+        if (!cancelled) setRoom(r);
+      })
+      .catch((e) => {
+        // Ignore aborts from an intentional unmount (e.g. React StrictMode double-mount).
+        if (cancelled) return;
+        console.error('LiveKit connect failed', e);
+        setMediaError('Could not connect to the video/audio server.');
+      });
 
     return () => {
       cancelled = true;
@@ -91,58 +156,80 @@ export function useLiveKit(url: string | null, token: string | null): UseLiveKit
   const toggleCamera = useCallback(async () => {
     if (!room) return;
     const next = !cameraOn;
-    await room.localParticipant.setCameraEnabled(next);
-    setCameraOn(next);
+    try {
+      await room.localParticipant.setCameraEnabled(next);
+      setCameraOn(next);
+    } catch (e) {
+      setMediaError(`Camera could not start — check the browser's camera permission. (${(e as Error).message})`);
+    }
   }, [room, cameraOn]);
 
   const applyAudioDirective = useCallback(
     async (d: AudioDirective) => {
       if (!room) return;
       lastDirective.current = d;
-      await applyDirective(room, d);
+      try {
+        await applyDirective(room, d);
+        setMicOn(d.publishing);
+      } catch (e) {
+        setMediaError(`Microphone could not start — check the browser's mic permission. (${(e as Error).message})`);
+      }
     },
     [room]
   );
+
+  const startAudio = useCallback(async () => {
+    if (!room) return;
+    try {
+      await room.startAudio();
+      setAudioBlocked(!room.canPlaybackAudio);
+    } catch {
+      /* still blocked */
+    }
+  }, [room]);
+
+  const clearMediaError = useCallback(() => setMediaError(null), []);
 
   return {
     room,
     connected,
     participants,
     cameraOn,
+    micOn,
     toggleCamera,
     applyAudioDirective,
     speakingIds,
     speakerRecency,
+    audioTracks,
+    audioBlocked,
+    startAudio,
+    mediaError,
+    clearMediaError,
   };
 }
 
 async function applyDirective(room: Room, d: AudioDirective) {
   const local = room.localParticipant;
-  // Publishing state: mic on only when open or team_only.
+  // Publishing state: mic on only when open or team_only. This triggers the browser
+  // mic-permission prompt the first time; failures propagate to the caller for surfacing.
   await local.setMicrophoneEnabled(d.publishing);
 
   if (d.allowAll) {
-    // open (or mute) => everyone may subscribe to everything of mine.
     local.setTrackSubscriptionPermissions(true, []);
     return;
   }
 
-  // team_only => teammates get all my tracks; everyone else gets video only.
   const myVideoSids = Array.from(local.videoTrackPublications.values())
     .map((p) => p.trackSid)
     .filter(Boolean);
-
   const teammateSet = new Set(d.allowedIdentities);
   const perParticipant: ParticipantTrackPermission[] = [];
-
   for (const identity of teammateSet) {
     perParticipant.push({ participantIdentity: identity, allowAll: true });
   }
   for (const p of room.remoteParticipants.values()) {
     if (teammateSet.has(p.identity)) continue;
-    // Non-teammates (incl. the quiz master): video only, never my audio.
     perParticipant.push({ participantIdentity: p.identity, allowedTrackSids: myVideoSids });
   }
-
   local.setTrackSubscriptionPermissions(false, perParticipant);
 }

@@ -36,6 +36,8 @@ export const questionInputSchema = z
     correctPoints: z.number().int().positive().nullable().default(null),
     wrongPenalty: z.number().int().min(0).nullable().default(null),
     timeLimitSec: z.number().int().positive().nullable().default(null),
+    hint: z.string().nullable().default(null),
+    hintCost: z.number().int().min(0).default(0),
     source: z.enum(['manual', 'ai_pdf']).default('manual'),
   })
   .refine(
@@ -73,6 +75,8 @@ export async function createQuestion(sessionId: string, input: QuestionInput): P
       correctPoints: input.correctPoints,
       wrongPenalty: input.wrongPenalty,
       timeLimitSec: input.timeLimitSec,
+      hint: input.hint,
+      hintCost: input.hintCost,
       source: input.source,
     },
   });
@@ -94,6 +98,8 @@ export async function updateQuestion(
       correctPoints: input.correctPoints,
       wrongPenalty: input.wrongPenalty,
       timeLimitSec: input.timeLimitSec,
+      hint: input.hint,
+      hintCost: input.hintCost,
     },
   });
   if (row.sessionId !== sessionId) throw new Error('Question not in this session.');
@@ -147,12 +153,14 @@ export function toQuizQuestion(row: any): QuizQuestion {
         ? { correctPoints: row.correctPoints, wrongPenalty: row.wrongPenalty }
         : null,
     timeLimitSec: row.timeLimitSec,
+    hint: row.hint ?? null,
+    hintCost: row.hintCost ?? 0,
   };
 }
 
-/** Strip the correct answer for player-facing payloads (withheld until reveal). */
+/** Strip the correct answer AND the hint text for player-facing payloads. */
 export function toPublicQuestion(q: QuizQuestion): PublicQuestion {
-  const { correctOptionId, ...rest } = q;
+  const { correctOptionId, hint, ...rest } = q;
   void correctOptionId;
-  return rest;
+  return { ...rest, hasHint: !!hint };
 }

@@ -29,6 +29,7 @@ model Session {
   currentQuestionId String?
 
   createdAt   DateTime @default(now())
+  startedAt   DateTime?
   endedAt     DateTime?
 
   questions    Question[]
@@ -36,6 +37,21 @@ model Session {
   teams        Team[]
   answers      LockedAnswer[]
   adjustments  ScoreAdjustment[]
+  hintReveals  HintReveal[]
+}
+
+// A subject (team/solo) revealed a question's hint. If the question has a hintCost,
+// that many points are deducted from the subject for that question (Round 2 §hint).
+model HintReveal {
+  id         String  @id @default(cuid())
+  sessionId  String
+  session    Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  questionId String
+  subjectKey String // "team:<id>" | "solo:<id>"
+  createdAt  DateTime @default(now())
+
+  @@unique([sessionId, questionId, subjectKey])
+  @@index([sessionId])
 }
 
 // Manual score override + audit log (Addendum §2). Host-only. `delta` may be any
@@ -82,6 +98,10 @@ model Question {
   wrongPenalty  Int?
   timeLimitSec  Int?
 
+  // Optional host-written hint + the points it costs a subject to reveal it (0 = free).
+  hint     String?
+  hintCost Int     @default(0)
+
   // Provenance so the UI can flag AI-extracted vs hand-entered content.
   source String @default("manual") // "manual" | "ai_pdf"
 
@@ -124,6 +144,9 @@ model Participant {
 
   audioState String @default("mute") // AudioState
   connected  Boolean @default(false)
+  // "active" | "left" — a player who used Leave Quiz is marked left, not deleted, so
+  // the host + leaderboard can show they've gone (Round 2 §6).
+  status     String  @default("active")
 
   createdAt DateTime @default(now())
 

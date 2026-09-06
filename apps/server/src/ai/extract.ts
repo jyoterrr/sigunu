@@ -142,6 +142,8 @@ export async function extractQuizFromPdf(buffer: Buffer): Promise<ExtractionResu
         correctPoints: null,
         wrongPenalty: null,
         timeLimitSec: null,
+        hint: null,
+        hintCost: 0,
         source: 'ai_pdf' as const,
       };
     });

@@ -7,9 +7,11 @@ import { Home } from './pages/Home';
 import { Host } from './pages/Host';
 import { Play } from './pages/Play';
 import { Builder } from './pages/Builder';
+import { JoinByCode } from './pages/JoinByCode';
 
 const router = createBrowserRouter([
   { path: '/', element: <Home /> },
+  { path: '/join/:code', element: <JoinByCode /> },
   { path: '/host/:sessionId', element: <Host /> },
   { path: '/host/:sessionId/build', element: <Builder /> },
   { path: '/play/:sessionId', element: <Play /> },

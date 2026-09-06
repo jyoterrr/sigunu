@@ -32,7 +32,7 @@ export async function computeLeaderboard(sessionId: string): Promise<Leaderboard
     prisma.team.findMany({ where: { sessionId }, select: { id: true, name: true } }),
     prisma.participant.findMany({
       where: { sessionId, role: 'player', teamId: null },
-      select: { id: true, displayName: true },
+      select: { id: true, displayName: true, status: true },
     }),
     prisma.question.findMany({
       where: { sessionId, revealed: true },
@@ -41,6 +41,7 @@ export async function computeLeaderboard(sessionId: string): Promise<Leaderboard
         correctOptionId: true,
         correctPoints: true,
         wrongPenalty: true,
+        hintCost: true,
       },
     }),
   ]);
@@ -71,6 +72,7 @@ export async function computeLeaderboard(sessionId: string): Promise<Leaderboard
       name: p.displayName,
       score: 0,
       rank: 0,
+      left: p.status === 'left',
     });
   }
 
@@ -90,6 +92,19 @@ export async function computeLeaderboard(sessionId: string): Promise<Leaderboard
         unansweredPolicy,
       });
     }
+  }
+
+  // Hint penalties (Round 2 §hint): each subject that revealed a revealed question's
+  // hint loses that question's hintCost.
+  const hintCostByQ = new Map(revealedQuestions.map((q) => [q.id, q.hintCost ?? 0]));
+  const hintReveals = await prisma.hintReveal.findMany({
+    where: { sessionId, questionId: { in: revealedQuestions.map((q) => q.id) } },
+    select: { questionId: true, subjectKey: true },
+  });
+  for (const hr of hintReveals) {
+    const entry = scores.get(hr.subjectKey);
+    const cost = hintCostByQ.get(hr.questionId) ?? 0;
+    if (entry && cost) entry.score -= cost;
   }
 
   // Apply manual score overrides (Addendum §2): sum active adjustments per subject,

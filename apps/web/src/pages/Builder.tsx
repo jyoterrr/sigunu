@@ -15,6 +15,8 @@ interface Draft {
   correctPoints: number | null;
   wrongPenalty: number | null;
   timeLimitSec: number | null;
+  hint: string;
+  hintCost: number;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -29,6 +31,8 @@ const emptyDraft = (): Draft => ({
   correctPoints: null,
   wrongPenalty: null,
   timeLimitSec: null,
+  hint: '',
+  hintCost: 0,
 });
 
 export function Builder() {
@@ -138,6 +142,8 @@ export function Builder() {
       correctPoints: draft.correctPoints,
       wrongPenalty: draft.wrongPenalty,
       timeLimitSec: draft.timeLimitSec,
+      hint: draft.hint.trim() || null,
+      hintCost: draft.hint.trim() ? Math.max(0, draft.hintCost) : 0,
       source: 'manual' as const,
     };
     try {
@@ -161,6 +167,8 @@ export function Builder() {
       correctPoints: q.scoring?.correctPoints ?? null,
       wrongPenalty: q.scoring?.wrongPenalty ?? null,
       timeLimitSec: q.timeLimitSec,
+      hint: q.hint ?? '',
+      hintCost: q.hintCost ?? 0,
     });
 
   const del = async (id: string) => {
@@ -314,6 +322,17 @@ export function Builder() {
               <button className="btn-link" onClick={() => setField('correctOptionId', null)}>Clear correct answer</button>
             )}
           </div>
+
+          {/* Hint (Round 2 §hint) */}
+          <div className="control-label">Hint (optional) — players can reveal it for a point cost</div>
+          <label>Hint text
+            <textarea value={draft.hint} onChange={(e) => setField('hint', e.target.value)} rows={2} placeholder="A clue you write; shown only when a player reveals it" />
+          </label>
+          {draft.hint.trim() && (
+            <label>Hint cost (points deducted when revealed; 0 = free)
+              <input type="number" min={0} value={draft.hintCost} onChange={(e) => setField('hintCost', Math.max(0, Number(e.target.value) || 0))} />
+            </label>
+          )}
 
           <details className="overrides">
             <summary>Per-question overrides (optional)</summary>

@@ -3,6 +3,7 @@ import type {
   AudioControl,
   AudioDirective,
   AudioState,
+  ChatMessage,
   Leaderboard,
   LockedAnswer,
   ParticipantView,
@@ -14,10 +15,21 @@ import type {
 } from '@sigunu/shared';
 import { connectSocket, emitAck, type SigunuSocket } from '../lib/socket';
 
+export interface IncomingInvite {
+  inviteId: string;
+  fromName: string;
+}
+export interface NamePrompt {
+  inviteId: string;
+  inviteeName: string;
+}
+
 export interface SessionState {
   ready: boolean;
   error: string | null;
   phase: SessionPhase;
+  started: boolean;
+  joinCode: string;
   self: ParticipantView | null;
   participants: ParticipantView[];
   teams: TeamView[];
@@ -25,10 +37,30 @@ export interface SessionState {
   lockedAnswer: LockedAnswer | null;
   lastResult: QuestionResult | null;
   leaderboard: Leaderboard;
-  // actions
+  audioControl: AudioControl | null;
+  // chat
+  chat: ChatMessage[];
+  sendChat: (text: string) => Promise<void>;
+  // hints (questionId -> revealed hint text)
+  revealedHints: Record<string, string>;
+  revealHint: (questionId: string) => Promise<void>;
+  // membership
+  incomingInvite: IncomingInvite | null;
+  namePrompt: NamePrompt | null;
+  toast: string | null;
+  clearToast: () => void;
+  invite: (toParticipantId: string) => Promise<void>;
+  respondInvite: (inviteId: string, accept: boolean) => Promise<void>;
+  nameTeam: (inviteId: string, name: string) => Promise<void>;
+  leaveTeam: () => Promise<void>;
+  leaveQuiz: () => Promise<void>;
+  // ended
+  endedLeaderboard: Leaderboard | null;
+  // core actions
   lockAnswer: (questionId: string, optionId: string) => Promise<void>;
   setAudioState: (state: AudioState) => Promise<void>;
   host: {
+    start: () => Promise<void>;
     pushQuestion: (questionId: string) => Promise<void>;
     lockQuestion: (questionId: string) => Promise<void>;
     reveal: (questionId: string) => Promise<void>;
@@ -36,24 +68,12 @@ export interface SessionState {
     end: () => Promise<void>;
     adjustScore: (subjectKey: string, delta: number, reason?: string) => Promise<void>;
     undoAdjustment: (adjustmentId: string) => Promise<void>;
-    audioControl: (
-      questionId: string,
-      mediaId: string,
-      action: 'play' | 'pause',
-      positionSec: number
-    ) => Promise<void>;
+    audioControl: (questionId: string, mediaId: string, action: 'play' | 'pause', positionSec: number) => Promise<void>;
   };
-  /** Latest synchronized audio-control command from the host (for players to apply). */
-  audioControl: AudioControl | null;
 }
 
 const EMPTY_LB: Leaderboard = { entries: [], updatedAt: new Date().toISOString() };
 
-/**
- * Connects to the game-state socket and keeps a live view of the session. All
- * mutations go through the server (authoritative). `onAudioDirective` bridges to the
- * LiveKit layer so audio-state changes apply track permissions.
- */
 export function useSession(params: {
   sessionId: string;
   participantId: string;
@@ -66,6 +86,8 @@ export function useSession(params: {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<SessionPhase>('lobby');
+  const [started, setStarted] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
   const [self, setSelf] = useState<ParticipantView | null>(null);
   const [participants, setParticipants] = useState<ParticipantView[]>([]);
   const [teams, setTeams] = useState<TeamView[]>([]);
@@ -74,32 +96,36 @@ export function useSession(params: {
   const [lastResult, setLastResult] = useState<QuestionResult | null>(null);
   const [leaderboard, setLeaderboard] = useState<Leaderboard>(EMPTY_LB);
   const [audioControl, setAudioControl] = useState<AudioControl | null>(null);
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [revealedHints, setRevealedHints] = useState<Record<string, string>>({});
+  const [incomingInvite, setIncomingInvite] = useState<IncomingInvite | null>(null);
+  const [namePrompt, setNamePrompt] = useState<NamePrompt | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [endedLeaderboard, setEndedLeaderboard] = useState<Leaderboard | null>(null);
 
   const directiveCb = useRef(onAudioDirective);
   directiveCb.current = onAudioDirective;
 
   useEffect(() => {
+    // Don't connect until we have an identity (host's participantId resolves async).
+    if (!sessionId || !participantId || !token) return;
     const socket = connectSocket();
     socketRef.current = socket;
 
-    const apply = (s: SessionSnapshot) => {
-      setPhase(s.phase);
-      setSelf(s.self);
-      setParticipants(s.participants);
-      setTeams(s.teams);
-      setCurrentQuestion(s.currentQuestion);
-      setLockedAnswer(s.yourLockedAnswer);
-      setLeaderboard(s.leaderboard);
-    };
-
     socket.on('connect', async () => {
       try {
-        const snap = await emitAck<SessionSnapshot>(socket, 'session:join', {
-          sessionId,
-          participantId,
-          token,
-        });
-        apply(snap);
+        const s = await emitAck<SessionSnapshot>(socket, 'session:join', { sessionId, participantId, token });
+        setError(null);
+        setPhase(s.phase);
+        setStarted(s.started);
+        setJoinCode(s.joinCode);
+        setSelf(s.self);
+        setParticipants(s.participants);
+        setTeams(s.teams);
+        setCurrentQuestion(s.currentQuestion);
+        setLockedAnswer(s.yourLockedAnswer);
+        setLeaderboard(s.leaderboard);
+        setChat(s.recentChat);
         setReady(true);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to join.');
@@ -127,9 +153,21 @@ export function useSession(params: {
     socket.on('participants:update', ({ participants, teams }) => {
       setParticipants(participants);
       setTeams(teams);
+      setSelf((prev) => (prev ? participants.find((p) => p.id === prev.id) ?? prev : prev));
     });
     socket.on('audio:directive', (d) => directiveCb.current?.(d));
     socket.on('audio:control', (c) => setAudioControl(c));
+    socket.on('chat:message', (m) => setChat((prev) => [...prev.slice(-99), m]));
+    socket.on('hint:revealed', ({ questionId, hint }) =>
+      setRevealedHints((prev) => ({ ...prev, [questionId]: hint }))
+    );
+    socket.on('team:invite-received', ({ inviteId, fromName }) => setIncomingInvite({ inviteId, fromName }));
+    socket.on('team:name-needed', ({ inviteId, inviteeName }) => setNamePrompt({ inviteId, inviteeName }));
+    socket.on('team:invite-result', ({ message }) => setToast(message));
+    socket.on('session:ended', ({ leaderboard }) => {
+      setEndedLeaderboard(leaderboard);
+      setPhase('ended');
+    });
     socket.on('error', ({ message }) => message && setError(message));
 
     return () => {
@@ -138,61 +176,66 @@ export function useSession(params: {
     };
   }, [sessionId, participantId, token]);
 
+  const call = <T = null,>(event: string, payload: unknown) =>
+    emitAck<T>(socketRef.current!, event as never, payload);
+
   const lockAnswer = useCallback(async (questionId: string, optionId: string) => {
-    if (!socketRef.current) return;
-    const a = await emitAck<LockedAnswer>(socketRef.current, 'answer:lock', { questionId, optionId });
+    const a = await emitAck<LockedAnswer>(socketRef.current!, 'answer:lock', { questionId, optionId });
     setLockedAnswer(a);
   }, []);
-
   const setAudioState = useCallback(async (state: AudioState) => {
-    if (!socketRef.current) return;
-    await emitAck(socketRef.current, 'audio:set-state', { state });
+    await call('audio:set-state', { state });
   }, []);
+  const sendChat = useCallback(async (text: string) => {
+    await call('chat:send', { text });
+  }, []);
+  const revealHint = useCallback(async (questionId: string) => {
+    const { hint } = await emitAck<{ hint: string }>(socketRef.current!, 'hint:reveal', { questionId });
+    setRevealedHints((prev) => ({ ...prev, [questionId]: hint }));
+  }, []);
+  const invite = useCallback(async (toParticipantId: string) => {
+    await call('team:invite', { toParticipantId });
+    setToast('Invite sent.');
+  }, []);
+  const respondInvite = useCallback(async (inviteId: string, accept: boolean) => {
+    await call('team:invite-respond', { inviteId, accept });
+    setIncomingInvite(null);
+  }, []);
+  const nameTeam = useCallback(async (inviteId: string, name: string) => {
+    await call('team:name-new', { inviteId, name });
+    setNamePrompt(null);
+  }, []);
+  const leaveTeam = useCallback(async () => {
+    await call('team:leave', {});
+  }, []);
+  const leaveQuiz = useCallback(async () => {
+    await call('quiz:leave', {});
+  }, []);
+  const clearToast = useCallback(() => setToast(null), []);
 
   const host = {
-    pushQuestion: useCallback(async (questionId: string) => {
-      await emitAck(socketRef.current!, 'host:push-question', { questionId });
-    }, []),
-    lockQuestion: useCallback(async (questionId: string) => {
-      await emitAck(socketRef.current!, 'host:lock-question', { questionId });
-    }, []),
-    reveal: useCallback(async (questionId: string) => {
-      await emitAck(socketRef.current!, 'host:reveal', { questionId });
-    }, []),
-    next: useCallback(async () => {
-      await emitAck(socketRef.current!, 'host:next', {});
-    }, []),
-    end: useCallback(async () => {
-      await emitAck(socketRef.current!, 'host:end', {});
-    }, []),
+    start: useCallback(async () => { await call('host:start', {}); }, []),
+    pushQuestion: useCallback(async (questionId: string) => { await call('host:push-question', { questionId }); }, []),
+    lockQuestion: useCallback(async (questionId: string) => { await call('host:lock-question', { questionId }); }, []),
+    reveal: useCallback(async (questionId: string) => { await call('host:reveal', { questionId }); }, []),
+    next: useCallback(async () => { await call('host:next', {}); }, []),
+    end: useCallback(async () => { await call('host:end', {}); }, []),
     adjustScore: useCallback(async (subjectKey: string, delta: number, reason?: string) => {
-      await emitAck(socketRef.current!, 'host:adjust-score', { subjectKey, delta, reason });
+      await call('host:adjust-score', { subjectKey, delta, reason });
     }, []),
     undoAdjustment: useCallback(async (adjustmentId: string) => {
-      await emitAck(socketRef.current!, 'host:undo-adjustment', { adjustmentId });
+      await call('host:undo-adjustment', { adjustmentId });
     }, []),
-    audioControl: useCallback(
-      async (questionId: string, mediaId: string, action: 'play' | 'pause', positionSec: number) => {
-        await emitAck(socketRef.current!, 'host:audio-control', { questionId, mediaId, action, positionSec });
-      },
-      []
-    ),
+    audioControl: useCallback(async (questionId: string, mediaId: string, action: 'play' | 'pause', positionSec: number) => {
+      await call('host:audio-control', { questionId, mediaId, action, positionSec });
+    }, []),
   };
 
   return {
-    ready,
-    error,
-    phase,
-    self,
-    participants,
-    teams,
-    currentQuestion,
-    lockedAnswer,
-    lastResult,
-    leaderboard,
-    lockAnswer,
-    setAudioState,
-    host,
-    audioControl,
+    ready, error, phase, started, joinCode, self, participants, teams, currentQuestion,
+    lockedAnswer, lastResult, leaderboard, audioControl,
+    chat, sendChat, revealedHints, revealHint,
+    incomingInvite, namePrompt, toast, clearToast, invite, respondInvite, nameTeam, leaveTeam, leaveQuiz,
+    endedLeaderboard, lockAnswer, setAudioState, host,
   };
 }

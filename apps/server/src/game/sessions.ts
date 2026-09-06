@@ -159,7 +159,7 @@ export async function rosterOf(
   const [participants, teams] = await Promise.all([
     prisma.participant.findMany({
       where: { sessionId },
-      select: { id: true, displayName: true, role: true, teamId: true, connected: true },
+      select: { id: true, displayName: true, role: true, teamId: true, connected: true, status: true },
       orderBy: { createdAt: 'asc' },
     }),
     prisma.team.findMany({
@@ -174,6 +174,7 @@ export async function rosterOf(
       role: p.role as Role,
       teamId: p.teamId,
       connected: p.connected,
+      status: p.status as 'active' | 'left',
     })),
     teams: teams.map((t) => ({ id: t.id, name: t.name, memberIds: t.members.map((m) => m.id) })),
   };

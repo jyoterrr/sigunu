@@ -66,11 +66,16 @@ export function VideoTile({
   }, [pub, pub?.track]);
 
   const hasVideo = !!pub?.track && !pub.isMuted && (isLocal || (pub as RemoteTrackPublication).isSubscribed);
+  // A camera track exists and isn't muted, but isn't playable yet → it's connecting
+  // (Section 3: show a spinner instead of a blank tile so it reads as loading).
+  const connecting = !hasVideo && !!pub && !pub.isMuted && !isLocal;
 
   return (
     <div className="tile" ref={setContainer}>
       {hasVideo ? (
         <video ref={videoRef} autoPlay playsInline muted={isLocal} />
+      ) : connecting ? (
+        <div className="tile-loading"><div className="spinner" /><span>connecting…</span></div>
       ) : (
         <div className="tile-avatar">{label.slice(0, 1).toUpperCase()}</div>
       )}
