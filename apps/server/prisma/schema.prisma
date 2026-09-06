@@ -1,0 +1,142 @@
+// Sigunu data model.
+// The critical piece for Section 3 (race-safe team locking) is the unique index on
+// LockedAnswer(sessionId, questionId, lockKey) — see comment there.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id          String   @id @default(cuid())
+  joinCode    String   @unique
+  hostToken   String   @unique
+  phase       String   @default("lobby") // SessionPhase
+  roomName    String   @unique // LiveKit room
+
+  // Quiz config (Section 9)
+  defaultCorrectPoints Int    @default(10)
+  defaultWrongPenalty  Int    @default(0)
+  unansweredPolicy     String @default("zero") // "zero" | "penalty"
+
+  currentQuestionId String?
+
+  createdAt   DateTime @default(now())
+  endedAt     DateTime?
+
+  questions    Question[]
+  participants Participant[]
+  teams        Team[]
+  answers      LockedAnswer[]
+}
+
+model Question {
+  id        String  @id @default(cuid())
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  order Int
+  text  String
+
+  // Ordered media shown with the question, as JSON: [{ id, type, url, posterUrl?, caption? }].
+  // Manual questions may attach multiple images and/or videos.
+  media Json @default("[]")
+
+  // Verbatim options, stored as ordered JSON: [{ id, text }]
+  options Json
+
+  // Option id of the correct answer, or null if unknown/unmarked.
+  correctOptionId String?
+
+  // Per-question scoring override (null => use session defaults).
+  correctPoints Int?
+  wrongPenalty  Int?
+  timeLimitSec  Int?
+
+  // Provenance so the UI can flag AI-extracted vs hand-entered content.
+  source String @default("manual") // "manual" | "ai_pdf"
+
+  // Set true when the host reveals it; only revealed questions count on the leaderboard.
+  revealed   Boolean   @default(false)
+  revealedAt DateTime?
+
+  answers LockedAnswer[]
+
+  @@unique([sessionId, order])
+  @@index([sessionId])
+}
+
+model Team {
+  id        String  @id @default(cuid())
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  name      String
+
+  members Participant[]
+  answers LockedAnswer[]
+
+  // Team names must be unique per session (Section 3).
+  @@unique([sessionId, name])
+  @@index([sessionId])
+}
+
+model Participant {
+  id          String  @id @default(cuid())
+  sessionId   String
+  session     Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  displayName String
+  role        String  @default("player") // Role
+
+  // Opaque bearer token proving this participant's identity to the API + Socket.IO.
+  authToken String @unique
+
+  teamId String?
+  team   Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  audioState String @default("mute") // AudioState
+  connected  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  lockedAnswers LockedAnswer[]
+
+  @@index([sessionId])
+  @@index([teamId])
+}
+
+model LockedAnswer {
+  id        String  @id @default(cuid())
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  optionId String
+
+  // The participant who actually locked it.
+  lockedByParticipantId String
+  lockedBy              Participant @relation(fields: [lockedByParticipantId], references: [id], onDelete: Cascade)
+
+  // For team answers, the owning team; for solo answers, null.
+  teamId String?
+  team   Team?   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  /**
+   * lockKey is the SCORING SUBJECT that must answer only once per question:
+   *   - team answer  => "team:<teamId>"
+   *   - solo answer  => "solo:<participantId>"
+   * The unique index below makes "first write wins" a DATABASE guarantee: a second
+   * concurrent insert for the same subject+question fails at the DB, not in app code.
+   */
+  lockKey String
+
+  lockedAt DateTime @default(now())
+
+  @@unique([sessionId, questionId, lockKey])
+  @@index([sessionId, questionId])
+}

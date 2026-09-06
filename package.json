@@ -1,0 +1,24 @@
+{
+  "name": "sigunu",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Live video-chat platform for team-based quizzes",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev -w @sigunu/server",
+    "dev:web": "npm run dev -w @sigunu/web",
+    "build": "npm run build -w @sigunu/shared && npm run build -w @sigunu/server && npm run build -w @sigunu/web",
+    "db:push": "npm run db:push -w @sigunu/server",
+    "db:seed": "npm run db:seed -w @sigunu/server",
+    "db:studio": "npm run db:studio -w @sigunu/server",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2"
+  }
+}
