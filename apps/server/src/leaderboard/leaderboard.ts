@@ -31,7 +31,8 @@ export async function computeLeaderboard(sessionId: string): Promise<Leaderboard
   const [teams, soloPlayers, revealedQuestions] = await Promise.all([
     prisma.team.findMany({ where: { sessionId }, select: { id: true, name: true } }),
     prisma.participant.findMany({
-      where: { sessionId, role: 'player', teamId: null },
+      // Exclude players who left the quiz — they should disappear from the board.
+      where: { sessionId, role: 'player', teamId: null, status: { not: 'left' } },
       select: { id: true, displayName: true, status: true },
     }),
     prisma.question.findMany({

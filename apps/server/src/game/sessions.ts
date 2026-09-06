@@ -158,7 +158,8 @@ export async function rosterOf(
 ): Promise<{ participants: ParticipantView[]; teams: TeamView[] }> {
   const [participants, teams] = await Promise.all([
     prisma.participant.findMany({
-      where: { sessionId },
+      // Hide players who left the quiz — only people still in the meeting are visible.
+      where: { sessionId, status: { not: 'left' } },
       select: { id: true, displayName: true, role: true, teamId: true, connected: true, status: true },
       orderBy: { createdAt: 'asc' },
     }),

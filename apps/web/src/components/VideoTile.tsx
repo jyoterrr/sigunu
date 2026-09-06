@@ -26,10 +26,16 @@ export function VideoTile({
   const [pub, setPub] = useState<TrackPublication | undefined>(
     participant.getTrackPublication(Track.Source.Camera)
   );
+  // LiveKit mutates the SAME publication object in place when a track subscribes, so
+  // setPub(sameRef) won't re-render. This tick forces a re-render on every track event.
+  const [, setTick] = useState(0);
 
   // Track when this participant's camera publication appears/updates.
   useEffect(() => {
-    const update = () => setPub(participant.getTrackPublication(Track.Source.Camera));
+    const update = () => {
+      setPub(participant.getTrackPublication(Track.Source.Camera));
+      setTick((t) => t + 1);
+    };
     update();
     participant.on('trackPublished', update);
     participant.on('trackUnpublished', update);
@@ -68,7 +74,20 @@ export function VideoTile({
   const hasVideo = !!pub?.track && !pub.isMuted && (isLocal || (pub as RemoteTrackPublication).isSubscribed);
   // A camera track exists and isn't muted, but isn't playable yet → it's connecting
   // (Section 3: show a spinner instead of a blank tile so it reads as loading).
-  const connecting = !hasVideo && !!pub && !pub.isMuted && !isLocal;
+  const wantsVideo = !hasVideo && !!pub && !pub.isMuted && !isLocal;
+
+  // Safety fallback: if it can't establish within a few seconds, stop spinning and
+  // show the avatar rather than an endless "connecting" buffer.
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    if (!wantsVideo) {
+      setTimedOut(false);
+      return;
+    }
+    const t = setTimeout(() => setTimedOut(true), 8000);
+    return () => clearTimeout(t);
+  }, [wantsVideo, pub]);
+  const connecting = wantsVideo && !timedOut;
 
   return (
     <div className="tile" ref={setContainer}>
