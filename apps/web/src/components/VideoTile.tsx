@@ -37,12 +37,17 @@ export function VideoTile({
       setTick((t) => t + 1);
     };
     update();
+    // Remote-participant track events…
     participant.on('trackPublished', update);
     participant.on('trackUnpublished', update);
     participant.on('trackSubscribed', update);
     participant.on('trackUnsubscribed', update);
     participant.on('trackMuted', update);
     participant.on('trackUnmuted', update);
+    // …and LOCAL-participant events, so the host/player sees their own self-view when
+    // they turn their camera on (local publish fires localTrackPublished, not trackPublished).
+    participant.on('localTrackPublished', update);
+    participant.on('localTrackUnpublished', update);
     return () => {
       participant.off('trackPublished', update);
       participant.off('trackUnpublished', update);
@@ -50,6 +55,8 @@ export function VideoTile({
       participant.off('trackUnsubscribed', update);
       participant.off('trackMuted', update);
       participant.off('trackUnmuted', update);
+      participant.off('localTrackPublished', update);
+      participant.off('localTrackUnpublished', update);
     };
   }, [participant]);
 
