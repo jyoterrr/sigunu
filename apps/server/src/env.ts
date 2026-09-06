@@ -25,9 +25,15 @@ function optional(name: string, fallback: string): string {
 
 export const env = {
   port: Number(optional('PORT', '4000')),
-  webOrigins: optional('WEB_ORIGIN', 'http://localhost:5173')
-    .split(',')
-    .map((s) => s.trim()),
+  // Allowed browser origins for CORS. In a single-service deploy the browser origin
+  // is this server's own public URL — Render exposes it as RENDER_EXTERNAL_URL, which
+  // we trust automatically so you don't have to configure WEB_ORIGIN by hand.
+  webOrigins: [
+    ...optional('WEB_ORIGIN', 'http://localhost:5173').split(','),
+    ...(process.env.RENDER_EXTERNAL_URL ? [process.env.RENDER_EXTERNAL_URL] : []),
+  ]
+    .map((s) => s.trim())
+    .filter(Boolean),
 
   // LiveKit is OPTIONAL: without keys the server still boots and the full quiz flow
   // (join, teams, questions, locking, leaderboard over Socket.IO) works — only

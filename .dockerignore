@@ -1,0 +1,10 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.env
+.env.local
+apps/server/uploads
+apps/server/prisma/*.db
+apps/web/.vite
+*.log

@@ -1,9 +1,10 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import { promises as fs } from 'node:fs';
 import { createReadStream } from 'node:fs';
-import { statSync } from 'node:fs';
+import { statSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { Server } from 'socket.io';
 import { env } from './env.js';
@@ -65,6 +66,24 @@ async function main() {
     reply.header('Content-Length', size);
     return reply.send(createReadStream(full));
   });
+
+  // In production (single-service deploy), serve the built web app from this same
+  // server so the whole app is one origin — no separate static host, no CORS.
+  // WEB_DIST points at apps/web/dist; set by the Docker image / render.yaml.
+  const webDist = process.env.WEB_DIST
+    ? path.resolve(process.env.WEB_DIST)
+    : path.resolve(process.cwd(), 'apps/web/dist');
+  if (existsSync(path.join(webDist, 'index.html'))) {
+    await app.register(fastifyStatic, { root: webDist, wildcard: false });
+    // SPA fallback: any non-API GET returns index.html so client-side routing works.
+    app.setNotFoundHandler((req, reply) => {
+      if (req.method === 'GET' && !req.url.startsWith('/api') && !req.url.startsWith('/uploads') && !req.url.startsWith('/socket.io')) {
+        return reply.sendFile('index.html');
+      }
+      return reply.code(404).send({ error: 'Not found.' });
+    });
+    app.log.info(`Serving web app from ${webDist}`);
+  }
 
   await app.listen({ port: env.port, host: '0.0.0.0' });
 

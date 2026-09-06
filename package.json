@@ -8,7 +8,7 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
+    "dev": "npm run build -w @sigunu/shared && concurrently -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "npm run dev -w @sigunu/server",
     "dev:web": "npm run dev -w @sigunu/web",
     "build": "npm run build -w @sigunu/shared && npm run build -w @sigunu/server && npm run build -w @sigunu/web",
