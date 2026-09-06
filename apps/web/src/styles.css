@@ -288,3 +288,73 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
 
 /* Left tag on leaderboard */
 .lb-list li.left .lb-name { opacity: .55; }
+
+/* ============================================================
+   Mobile (phones) — natural page scroll, stacked single column,
+   wrapping top bar, dvh height. Targets ~phone widths.
+   ============================================================ */
+@media (max-width: 720px) {
+  html, body { overflow-x: hidden; }
+
+  /* Full-height containers grow with content so the PAGE scrolls (no fragile nested
+     scroll areas), and use dvh so mobile browser chrome doesn't clip the bottom. */
+  .quiz-screen, .stage, .builder { height: auto; min-height: 100dvh; }
+
+  /* Top bars: stick to the top and wrap so every control stays reachable. */
+  .quiz-topbar, .topbar {
+    position: sticky; top: 0; z-index: 40;
+    flex-wrap: wrap; gap: 6px; padding: 8px 10px;
+    background: var(--bg); border-bottom: 1px solid var(--line);
+  }
+  .topbar-spacer { display: none; }
+  .quiz-topbar .controls { flex: 1 1 100%; order: 5; justify-content: space-between; gap: 10px; padding: 6px 8px; }
+  .controls { flex-wrap: wrap; }
+  .control-group { gap: 6px; }
+  .seg button { padding: 8px 7px; font-size: 12px; }
+  .chip-btn, .grid-expand-btn { font-size: 12px; padding: 6px 9px; }
+  .brand-sm { font-size: 14px; }
+
+  /* Player quiz screen: stack, scroll the page. */
+  .quiz-body { display: block; padding: 10px; overflow: visible; }
+  .quiz-main { display: block; }
+  .mq-question { display: block; overflow: visible; padding: 6px 0 10px; }
+  .mq-question-text { position: static; font-size: clamp(20px, 6vw, 26px); padding: 6px 0; }
+  .mq-media { width: 100%; }
+  .media-stage { max-height: 42vh; }
+  .mq-lower { margin-top: 12px; }
+  .qm-window { width: 46%; max-width: 200px; }
+  .mq-options { grid-template-columns: 1fr; }
+  .mq-option { padding: 13px 14px; font-size: 15px; border-radius: 22px; }
+  .quiz-right { display: block; overflow: visible; margin-top: 14px; }
+  .teammate-panel, .chat-panel { max-height: none; }
+  .chat-panel { min-height: 160px; }
+
+  /* Host console: stack the three columns. */
+  .stage-main { display: block; overflow: visible; padding: 10px; }
+  .stage-video, .stage-center { min-height: 0; margin-bottom: 12px; }
+  .stage-video .grid { min-height: 180px; }
+
+  /* Builder: single column. */
+  .builder-grid { display: block; padding: 10px; }
+  .builder-grid > * { margin-bottom: 12px; }
+  .override-form { grid-template-columns: 1fr; }
+  .ce-stage, .preview-media .media-stage { aspect-ratio: 4/3; }
+
+  /* Denser video grids on small screens. */
+  .grid-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+  .grid-overlay { padding: 8px; }
+  .grid-overlay .grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+
+  /* Share panel + modals fit narrow screens. */
+  .share-row { flex-wrap: wrap; }
+  .share-label { width: auto; }
+  .share-code { font-size: 18px; }
+  .modal { max-width: 100%; }
+  .home { margin: 5vh auto; }
+}
+
+/* Very small phones */
+@media (max-width: 380px) {
+  .seg button { padding: 7px 5px; font-size: 11px; }
+  .mq-question-text { font-size: 20px; }
+}
