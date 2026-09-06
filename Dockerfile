@@ -20,11 +20,14 @@ COPY . .
 # swapping only the datasource provider. Models are portable (JSON stored as TEXT).
 RUN sed 's/provider = "sqlite"/provider = "postgresql"/' apps/server/prisma/schema.prisma > apps/server/prisma/schema.prod.prisma
 
-# Build shared types, the web app, and the server; generate the Prisma client.
+# Generate the Prisma client FIRST — the server's TypeScript build depends on its
+# generated types (e.g. prisma.scoreAdjustment, Prisma.PrismaClientKnownRequestError).
+RUN npx prisma generate --schema apps/server/prisma/schema.prod.prisma
+
+# Build shared types, the web app, then the server.
 RUN npm run build -w @sigunu/shared \
  && npm run build -w @sigunu/web \
- && npm run build -w @sigunu/server \
- && npx prisma generate --schema apps/server/prisma/schema.prod.prisma
+ && npm run build -w @sigunu/server
 
 ENV NODE_ENV=production
 ENV WEB_DIST=/app/apps/web/dist
