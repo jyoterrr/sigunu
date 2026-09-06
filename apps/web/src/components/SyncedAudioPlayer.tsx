@@ -5,10 +5,16 @@ import { mediaSrc } from './QuestionMediaStage';
 /**
  * Quiz-master-synchronized audio playback (Addendum §1). Renders a hidden <audio> per
  * audio clip and applies the host's latest play/pause command to all clients at once.
- * Playback position is corrected for network delay using the server timestamp so
- * everyone stays roughly in sync. The host receives its own broadcast too, so it hears
- * the clip alongside players.
+ * The host receives its own broadcast too, so it hears the clip alongside players.
+ *
+ * Sync: we seek to the host's reported position and play immediately on receipt. We do
+ * NOT add "elapsed since server time" — client and server clocks aren't synchronized, so
+ * that offset (clock skew) can be seconds off and pushes audio OUT of sync. Seeking to
+ * the host's position on receipt keeps everyone within network jitter (~sub-second), and
+ * we only re-seek when we're off by more than a small threshold so re-syncs don't stutter.
  */
+const SYNC_THRESHOLD_SEC = 0.35;
+
 export function SyncedAudioPlayer({
   audios,
   control,
@@ -28,15 +34,20 @@ export function SyncedAudioPlayer({
 
     if (control.action === 'pause') {
       el.pause();
-      el.currentTime = control.positionSec;
+      try {
+        el.currentTime = control.positionSec;
+      } catch {
+        /* ignore */
+      }
       return;
     }
-    // action === 'play': correct for the delay since the host issued the command.
-    const driftSec = Math.max(0, (Date.now() - control.atServerTime) / 1000);
-    try {
-      el.currentTime = control.positionSec + driftSec;
-    } catch {
-      /* seeking may not be ready yet; play from current */
+    // action === 'play': align to the host's position, then play.
+    if (Math.abs(el.currentTime - control.positionSec) > SYNC_THRESHOLD_SEC) {
+      try {
+        el.currentTime = control.positionSec;
+      } catch {
+        /* seeking may not be ready yet; play from current */
+      }
     }
     void el.play().catch(() => {
       /* browser blocked autoplay; the viewer can still hit play if we expose a control */

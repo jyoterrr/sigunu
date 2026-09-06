@@ -13,6 +13,7 @@ import { SyncedAudioPlayer } from '../components/SyncedAudioPlayer';
 import { SharePanel } from '../components/SharePanel';
 import { ChatPanel } from '../components/ChatPanel';
 import { AudioRenderer, EnableAudioBanner } from '../components/AudioRenderer';
+import { QuestionMediaStage } from '../components/QuestionMediaStage';
 
 export function Host() {
   const { sessionId = '' } = useParams();
@@ -115,6 +116,15 @@ export function Host() {
             {currentFull && (
               <div className="host-current">
                 <div className="q-text">{currentFull.text}</div>
+                {/* Host sees the media and controls the video; play/pause/seek sync to all. */}
+                <QuestionMediaStage
+                  media={currentFull.media}
+                  className="host-media"
+                  videoMode="host"
+                  onVideoControl={(mediaId, action, positionSec) =>
+                    session.host.audioControl(currentFull.id, mediaId, action, positionSec)
+                  }
+                />
                 <ul>
                   {currentFull.options.map((o) => (
                     <li key={o.id} className={currentFull.correctOptionId === o.id ? 'correct' : ''}>

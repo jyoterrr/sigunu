@@ -243,7 +243,7 @@ export function Builder() {
             <p className="muted">Exactly how players will see it.</p>
             <div className="preview-card">
               <div className="preview-q">{draft.text || 'Your question text…'}</div>
-              <QuestionMediaStage media={draft.media} className="preview-media" />
+              <QuestionMediaStage media={draft.media} className="preview-media" videoMode="preview" />
               {audios.length > 0 && <div className="preview-audio">🔊 {audios.length} audio clip(s) — host-triggered</div>}
               <div className="preview-options">
                 {draft.options.map((o) => (

@@ -121,7 +121,12 @@ export function Play() {
             <>
               <div className="mq-question">
                 <div className="mq-question-text">{question.text}</div>
-                <QuestionMediaStage media={question.media} className="mq-media" />
+                <QuestionMediaStage
+                  media={question.media}
+                  className="mq-media"
+                  videoMode="participant"
+                  videoControl={session.audioControl}
+                />
                 {audios.length > 0 && <div className="mq-audio-hint">🔊 audio round — the quiz master controls playback</div>}
                 {question.hasHint && (
                   <div className="hint-box">
