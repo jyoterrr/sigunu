@@ -1,16 +1,27 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  Track,
-  RemoteTrackPublication,
-  type Participant,
-  type TrackPublication,
-} from 'livekit-client';
+import { useEffect, useReducer, useRef, useState } from 'react';
+import { Track, RemoteTrackPublication, type Participant } from 'livekit-client';
 import { useAdaptiveSubscription } from '../livekit/useAdaptiveSubscription';
 
+const PARTICIPANT_EVENTS = [
+  'trackPublished',
+  'trackUnpublished',
+  'trackSubscribed',
+  'trackUnsubscribed',
+  'trackMuted',
+  'trackUnmuted',
+  'localTrackPublished',
+  'localTrackUnpublished',
+] as const;
+
 /**
- * One participant's video tile. For remote participants the camera track is
- * subscribed/unsubscribed and quality-adjusted by useAdaptiveSubscription based on
- * this tile's visibility and size. Off-camera participants render an avatar.
+ * One participant's video tile.
+ *
+ * It reads the participant's CURRENT camera publication fresh on every render and just
+ * forces a re-render whenever a track event fires. Caching the publication in state was
+ * unreliable for always-mounted tiles (the quiz-master window, teammate windows): LiveKit
+ * mutates the same publication object in place, so a cached copy went stale and the tile
+ * wouldn't update when a camera turned on/off/on. Reading live + re-rendering on events
+ * keeps these persistent windows seamless.
  */
 export function VideoTile({
   participant,
@@ -23,68 +34,44 @@ export function VideoTile({
 }) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [pub, setPub] = useState<TrackPublication | undefined>(
-    participant.getTrackPublication(Track.Source.Camera)
-  );
-  // LiveKit mutates the SAME publication object in place when a track subscribes, so
-  // setPub(sameRef) won't re-render. This tick forces a re-render on every track event.
-  const [, setTick] = useState(0);
+  const [, bump] = useReducer((x: number) => x + 1, 0);
 
-  // Track when this participant's camera publication appears/updates.
+  // Re-render on any track change for this participant (local or remote).
   useEffect(() => {
-    const update = () => {
-      setPub(participant.getTrackPublication(Track.Source.Camera));
-      setTick((t) => t + 1);
-    };
-    update();
-    // Remote-participant track events…
-    participant.on('trackPublished', update);
-    participant.on('trackUnpublished', update);
-    participant.on('trackSubscribed', update);
-    participant.on('trackUnsubscribed', update);
-    participant.on('trackMuted', update);
-    participant.on('trackUnmuted', update);
-    // …and LOCAL-participant events, so the host/player sees their own self-view when
-    // they turn their camera on (local publish fires localTrackPublished, not trackPublished).
-    participant.on('localTrackPublished', update);
-    participant.on('localTrackUnpublished', update);
+    const rerender = () => bump();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const emitter = participant as any;
+    for (const e of PARTICIPANT_EVENTS) emitter.on(e, rerender);
+    rerender();
     return () => {
-      participant.off('trackPublished', update);
-      participant.off('trackUnpublished', update);
-      participant.off('trackSubscribed', update);
-      participant.off('trackUnsubscribed', update);
-      participant.off('trackMuted', update);
-      participant.off('trackUnmuted', update);
-      participant.off('localTrackPublished', update);
-      participant.off('localTrackUnpublished', update);
+      for (const e of PARTICIPANT_EVENTS) emitter.off(e, rerender);
     };
   }, [participant]);
 
-  // Selective subscription + adaptive quality (remote only; local isn't subscribed).
-  useAdaptiveSubscription(
-    !isLocal && pub instanceof RemoteTrackPublication ? pub : undefined,
-    container
-  );
+  // Live read — never cached.
+  const pub = participant.getTrackPublication(Track.Source.Camera);
 
-  // Attach the video track to the element whenever it becomes available.
+  // Per-tile resolution (subscription itself is eager, in useLiveKit).
+  useAdaptiveSubscription(!isLocal && pub instanceof RemoteTrackPublication ? pub : undefined, container);
+
+  const track = pub?.track;
+  const hasVideo =
+    !!track && !pub.isMuted && (isLocal || (pub as RemoteTrackPublication).isSubscribed);
+
+  // Attach/detach the video element as the track comes and goes.
   useEffect(() => {
     const el = videoRef.current;
-    const track = pub?.track;
-    if (el && track && (pub?.kind === Track.Kind.Video)) {
+    if (el && track && pub?.kind === Track.Kind.Video) {
       track.attach(el);
       return () => {
         track.detach(el);
       };
     }
-  }, [pub, pub?.track]);
+  }, [track, pub, hasVideo]);
 
-  const hasVideo = !!pub?.track && !pub.isMuted && (isLocal || (pub as RemoteTrackPublication).isSubscribed);
-  // A camera track exists and isn't muted, but isn't playable yet → it's connecting
-  // (Section 3: show a spinner instead of a blank tile so it reads as loading).
+  // A camera exists but isn't playable yet → "connecting"; fall back to the avatar if it
+  // can't establish, so it never spins forever.
   const wantsVideo = !hasVideo && !!pub && !pub.isMuted && !isLocal;
-
-  // Safety fallback: if it can't establish within a few seconds, stop spinning and
-  // show the avatar rather than an endless "connecting" buffer.
   const [timedOut, setTimedOut] = useState(false);
   useEffect(() => {
     if (!wantsVideo) {

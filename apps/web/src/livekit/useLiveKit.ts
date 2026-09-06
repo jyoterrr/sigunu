@@ -148,7 +148,10 @@ export function useLiveKit(url: string | null, token: string | null): UseLiveKit
 
     r.connect(url, token, { autoSubscribe: false })
       .then(() => {
-        if (!cancelled) setRoom(r);
+        if (cancelled) return;
+        setRoom(r);
+        // Dev-only handle for debugging/testing (e.g. publishing a synthetic track).
+        if (import.meta.env.DEV) (window as unknown as { __sigunuRoom?: Room }).__sigunuRoom = r;
       })
       .catch((e) => {
         // Ignore aborts from an intentional unmount (e.g. React StrictMode double-mount).
