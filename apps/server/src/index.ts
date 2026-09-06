@@ -18,6 +18,18 @@ async function main() {
   await app.register(cors, { origin: env.webOrigins, credentials: true });
   await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } }); // videos can be large
 
+  // Tolerate an empty JSON body (e.g. POST /api/sessions has no payload) instead of
+  // 500-ing, which the default parser does for Content-Type: application/json + "".
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    const s = (body as string).trim();
+    if (!s) return done(null, {});
+    try {
+      done(null, JSON.parse(s));
+    } catch (e) {
+      done(e as Error);
+    }
+  });
+
   await registerRoutes(app);
 
   // Serve uploaded media (images/videos attached to questions).

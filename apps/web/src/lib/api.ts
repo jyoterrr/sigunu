@@ -8,7 +8,10 @@ import type {
 const BASE = import.meta.env.VITE_API_URL || '';
 
 async function req<T>(path: string, init?: RequestInit & { hostToken?: string }): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {};
+  // Only declare a JSON body when we actually send one — otherwise Fastify rejects a
+  // Content-Type: application/json request that has an empty body (e.g. createSession).
+  if (init?.body != null) headers['Content-Type'] = 'application/json';
   if (init?.hostToken) headers['x-host-token'] = init.hostToken;
   const res = await fetch(`${BASE}${path}`, { ...init, headers: { ...headers, ...init?.headers } });
   if (!res.ok) {
