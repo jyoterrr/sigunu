@@ -144,8 +144,10 @@ export function Host() {
                 {currentFull.media.some((m) => m.kind === 'audio' || m.kind === 'video') && (
                   <div className="host-media-controls">
                     <div className="media-ready">
-                      {rc ? `${rc.ready}/${rc.total} device(s) ready to play` : 'waiting for devices…'}
-                      {!majorityReady && !mediaOverride && <span className="muted small"> — waiting for a majority</span>}
+                      <b>{rc ? rc.ready : 0} / {rc ? rc.total : 0}</b> participant device(s) ready
+                      {rc && rc.total > 0 && !majorityReady && !mediaOverride && (
+                        <span className="muted small"> — Play unlocks at {Math.ceil(rc.total / 2)}</span>
+                      )}
                     </div>
                     {currentFull.media.filter((m) => m.kind === 'audio').map((a) => (
                       <div key={a.id} className="host-audio-row">

@@ -77,10 +77,14 @@ export function Play() {
     reportedRef.current = null;
     const check = () => {
       if (reportedRef.current === question.id) return;
+      // Ready = this device's audio is unlocked and the media element exists. We do NOT
+      // wait for a buffered readyState — mobile browsers lazy-load media and never report
+      // it, which would stop the device from ever acknowledging (laptops preload, so they
+      // acked instantly). Buffering is kicked off eagerly (audio load(), video preload).
       if (!isAudioUnlocked()) return;
       const els = Array.from(document.querySelectorAll('audio, .stage-video-wrap video')) as HTMLMediaElement[];
       const real = els.filter((el) => el.src && !el.src.startsWith('data:'));
-      if (real.length > 0 && real.every((el) => el.readyState >= 3)) {
+      if (real.length > 0) {
         reportedRef.current = question.id;
         session.markReady(question.id);
       }

@@ -49,8 +49,18 @@ export function SyncedAudioPlayer({
           src={mediaSrc(a.url)}
           preload="auto"
           ref={(el) => {
-            if (el) refs.current.set(a.id, el);
-            else refs.current.delete(a.id);
+            if (el) {
+              refs.current.set(a.id, el);
+              // Force eager buffering — mobile browsers otherwise lazy-load audio, which
+              // delays readiness and makes the host's first Play have to load-then-play.
+              try {
+                el.load();
+              } catch {
+                /* ignore */
+              }
+            } else {
+              refs.current.delete(a.id);
+            }
           }}
         />
       ))}
