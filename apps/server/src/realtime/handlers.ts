@@ -33,6 +33,18 @@ export function registerSocketHandlers(io: SigunuServer) {
     io.to(roomFor(sessionId)).emit('media:ready-count', { questionId, ready, total });
   };
 
+  // Drop a participant from every question's readiness set for a session (e.g. on
+  // disconnect/reload) so a reloaded device counts as "not ready" until it taps again.
+  // Re-broadcasts the count for each question the participant was actually removed from.
+  const clearParticipantReadiness = async (sessionId: string, participantId: string) => {
+    for (const [key, set] of mediaReadiness) {
+      if (!key.startsWith(`${sessionId}|`)) continue;
+      if (set.delete(participantId)) {
+        await broadcastReadyCount(sessionId, key.slice(sessionId.length + 1));
+      }
+    }
+  };
+
   const broadcastRoster = async (sessionId: string) => {
     const roster = await rosterOf(sessionId);
     io.to(roomFor(sessionId)).emit('participants:update', roster);
@@ -509,6 +521,9 @@ export function registerSocketHandlers(io: SigunuServer) {
         if (socketsByParticipant.get(d.participantId) === (socket as unknown as Socket<any, any, any, SocketData>)) {
           socketsByParticipant.delete(d.participantId);
         }
+        // A reload/disconnect resets this device to "not ready" — it must tap "Get ready"
+        // again once it reconnects, since a fresh page hasn't blessed/buffered the media.
+        await clearParticipantReadiness(d.sessionId, d.participantId).catch(() => {});
         await prisma.participant
           .update({ where: { id: d.participantId }, data: { connected: false } })
           .catch(() => {});

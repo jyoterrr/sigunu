@@ -109,6 +109,10 @@ export function useSession(params: {
 
   const directiveCb = useRef(onAudioDirective);
   directiveCb.current = onAudioDirective;
+  // The question this device has marked itself ready for. Persists across a transient
+  // socket reconnect (so we re-ack) but NOT across a full page reload (fresh mount = null,
+  // so a reloaded device is correctly "not ready" until it taps "Get ready" again).
+  const readyForRef = useRef<string | null>(null);
 
   useEffect(() => {
     // Don't connect until we have an identity (host's participantId resolves async).
@@ -131,6 +135,14 @@ export function useSession(params: {
         setLeaderboard(s.leaderboard);
         setChat(s.recentChat);
         setReady(true);
+        // Re-ack readiness after a transient reconnect (server drops readiness on the
+        // disconnect). Only fires if this same page had already marked ready for the
+        // still-current question — a full reload starts with readyForRef=null.
+        if (readyForRef.current && readyForRef.current === s.currentQuestion?.id) {
+          socket.emit('media:ready', { questionId: readyForRef.current }, () => {});
+        } else {
+          readyForRef.current = null;
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to join.');
       }
@@ -148,6 +160,7 @@ export function useSession(params: {
       setLockedAnswer(null);
       setLastResult(null);
       setMediaReady(null);
+      readyForRef.current = null; // new question → this device must tap "Get ready" again
     });
     socket.on('question:locked-for-you', (a) => setLockedAnswer(a));
     socket.on('question:revealed', (r) => {
@@ -200,6 +213,7 @@ export function useSession(params: {
     setRevealedHints((prev) => ({ ...prev, [questionId]: hint }));
   }, []);
   const markReady = useCallback((questionId: string) => {
+    readyForRef.current = questionId; // remember, so we can re-ack after a transient reconnect
     socketRef.current?.emit('media:ready', { questionId }, () => {});
   }, []);
   const invite = useCallback(async (toParticipantId: string) => {
