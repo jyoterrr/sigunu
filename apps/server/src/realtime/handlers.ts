@@ -20,6 +20,18 @@ export function registerSocketHandlers(io: SigunuServer) {
   const orchestrator = new Orchestrator(io);
   // participantId -> latest socket, so membership changes can re-sync a specific client.
   const socketsByParticipant = new Map<string, Socket<any, any, any, SocketData>>();
+  // Media readiness per question: `${sessionId}|${questionId}` -> set of ready participantIds.
+  const mediaReadiness = new Map<string, Set<string>>();
+
+  const broadcastReadyCount = async (sessionId: string, questionId: string) => {
+    // Total = players actually connected/in the meeting (not stale disconnected records).
+    const total = await prisma.participant.count({
+      where: { sessionId, role: 'player', status: { not: 'left' }, connected: true },
+    });
+    const readySet = mediaReadiness.get(`${sessionId}|${questionId}`);
+    const ready = readySet ? Math.min(readySet.size, total) : 0;
+    io.to(roomFor(sessionId)).emit('media:ready-count', { questionId, ready, total });
+  };
 
   const broadcastRoster = async (sessionId: string) => {
     const roster = await rosterOf(sessionId);
@@ -215,8 +227,13 @@ export function registerSocketHandlers(io: SigunuServer) {
     socket.on('host:push-question', async ({ questionId }, ack) => {
       if (!requireHost(ack)) return;
       try {
+        // Clear media readiness from prior questions in this session.
+        for (const k of mediaReadiness.keys()) {
+          if (k.startsWith(`${socket.data.sessionId}|`)) mediaReadiness.delete(k);
+        }
         const q = await orchestrator.pushQuestion(socket.data.sessionId, questionId);
         ack({ ok: true, data: q });
+        await broadcastReadyCount(socket.data.sessionId, questionId);
       } catch (e) {
         ack({ ok: false, error: errMsg(e) });
       }
@@ -350,6 +367,18 @@ export function registerSocketHandlers(io: SigunuServer) {
         if (e instanceof HintError) return ack({ ok: false, error: e.message });
         ack({ ok: false, error: errMsg(e) });
       }
+    });
+
+    // -- Device auto-acknowledges it's ready to play the current media (no button). --
+    socket.on('media:ready', async ({ questionId }, ack) => {
+      const d = socket.data;
+      if (!d?.participantId) return ack({ ok: false, error: 'Not joined.' });
+      const key = `${d.sessionId}|${questionId}`;
+      let set = mediaReadiness.get(key);
+      if (!set) mediaReadiness.set(key, (set = new Set()));
+      set.add(d.participantId);
+      ack({ ok: true, data: null });
+      await broadcastReadyCount(d.sessionId, questionId);
     });
 
     // -- Leave the quiz entirely (Round 2 §6). --

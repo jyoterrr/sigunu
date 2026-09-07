@@ -22,6 +22,7 @@ export function Host() {
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [audioState, setAudioStateLocal] = useState<AudioState>('mute');
   const [bootErr, setBootErr] = useState<string | null>(null);
+  const [mediaOverride, setMediaOverride] = useState(false);
 
   // Get the host's LiveKit token + participant, and load the quiz.
   useEffect(() => {
@@ -60,6 +61,14 @@ export function Host() {
 
   const current = session.currentQuestion;
   const currentFull = questions.find((q) => q.id === current?.id) ?? null;
+
+  // Media playback is gated on a majority of devices acknowledging they're ready (or the
+  // host's manual override). Readiness is auto-reported by each device (no button there).
+  const rc = session.mediaReady && session.mediaReady.questionId === current?.id ? session.mediaReady : null;
+  const majorityReady = !rc || rc.total === 0 ? true : rc.ready >= Math.ceil(rc.total / 2);
+  const canPlayMedia = mediaOverride || majorityReady;
+  const playMedia = (mediaId: string) => session.host.audioControl(currentFull!.id, mediaId, 'play', 0);
+  const pauseMedia = (mediaId: string) => session.host.audioControl(currentFull!.id, mediaId, 'pause', 0);
 
   return (
     <div className="stage">
@@ -116,14 +125,12 @@ export function Host() {
             {currentFull && (
               <div className="host-current">
                 <div className="q-text">{currentFull.text}</div>
-                {/* Host sees the media and controls the video; play/pause/seek sync to all. */}
+                {/* Host sees the media; the video follows the host's own play/pause below. */}
                 <QuestionMediaStage
                   media={currentFull.media}
                   className="host-media"
-                  videoMode="host"
-                  onVideoControl={(mediaId, action, positionSec) =>
-                    session.host.audioControl(currentFull.id, mediaId, action, positionSec)
-                  }
+                  videoMode="synced"
+                  videoControl={session.audioControl}
                 />
                 <ul>
                   {currentFull.options.map((o) => (
@@ -132,16 +139,32 @@ export function Host() {
                     </li>
                   ))}
                 </ul>
-                {currentFull.media.some((m) => m.kind === 'audio') && (
-                  <div className="host-audio">
-                    <span className="control-label">Audio (plays for everyone in sync)</span>
+
+                {/* Synchronized media playback, gated on device readiness (Round 2). */}
+                {currentFull.media.some((m) => m.kind === 'audio' || m.kind === 'video') && (
+                  <div className="host-media-controls">
+                    <div className="media-ready">
+                      {rc ? `${rc.ready}/${rc.total} device(s) ready to play` : 'waiting for devices…'}
+                      {!majorityReady && !mediaOverride && <span className="muted small"> — waiting for a majority</span>}
+                    </div>
                     {currentFull.media.filter((m) => m.kind === 'audio').map((a) => (
                       <div key={a.id} className="host-audio-row">
                         <span>🔊 {a.caption ?? 'audio'}</span>
-                        <button onClick={() => session.host.audioControl(currentFull.id, a.id, 'play', 0)}>▶ Play</button>
-                        <button onClick={() => session.host.audioControl(currentFull.id, a.id, 'pause', 0)}>⏸ Pause</button>
+                        <button className="primary" disabled={!canPlayMedia} onClick={() => playMedia(a.id)}>▶ Play</button>
+                        <button onClick={() => pauseMedia(a.id)}>⏸ Pause</button>
                       </div>
                     ))}
+                    {currentFull.media.filter((m) => m.kind === 'video').map((v) => (
+                      <div key={v.id} className="host-audio-row">
+                        <span>🎬 video</span>
+                        <button className="primary" disabled={!canPlayMedia} onClick={() => playMedia(v.id)}>▶ Play</button>
+                        <button onClick={() => pauseMedia(v.id)}>⏸ Pause</button>
+                      </div>
+                    ))}
+                    <label className="checkbox small">
+                      <input type="checkbox" checked={mediaOverride} onChange={(e) => setMediaOverride(e.target.checked)} />
+                      Play without waiting for a majority (override)
+                    </label>
                   </div>
                 )}
               </div>

@@ -250,6 +250,10 @@ export interface ClientToServerEvents {
   /** Reveal a question's hint; charges the subject the question's hintCost. */
   'hint:reveal': (p: { questionId: string }, ack: (res: Ack<{ hint: string }>) => void) => void;
 
+  /** Participant signals they're ready for the current question's audio/video (also the
+   *  user gesture that unlocks their media autoplay). Host waits for enough ready. */
+  'media:ready': (p: { questionId: string }, ack: (res: Ack<null>) => void) => void;
+
   /** Global chat (Round 2 §chat) — everyone sees it. */
   'chat:send': (p: { text: string }, ack: (res: Ack<null>) => void) => void;
 
@@ -329,6 +333,8 @@ export interface ServerToClientEvents {
   'participants:update': (p: { participants: ParticipantView[]; teams: TeamView[] }) => void;
   'audio:directive': (d: AudioDirective) => void;
   'audio:control': (c: AudioControl) => void;
+  /** How many participants are ready for the current media question (for the host). */
+  'media:ready-count': (p: { questionId: string; ready: number; total: number }) => void;
   'chat:message': (m: ChatMessage) => void;
   /** Sent to a participant when someone invites them to a team. */
   'team:invite-received': (p: { inviteId: string; fromName: string }) => void;

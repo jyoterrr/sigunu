@@ -44,6 +44,9 @@ export interface SessionState {
   // hints (questionId -> revealed hint text)
   revealedHints: Record<string, string>;
   revealHint: (questionId: string) => Promise<void>;
+  // media readiness (host sees how many devices are ready to play the current media)
+  mediaReady: { questionId: string; ready: number; total: number } | null;
+  markReady: (questionId: string) => void;
   // membership
   incomingInvite: IncomingInvite | null;
   namePrompt: NamePrompt | null;
@@ -98,6 +101,7 @@ export function useSession(params: {
   const [audioControl, setAudioControl] = useState<AudioControl | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [revealedHints, setRevealedHints] = useState<Record<string, string>>({});
+  const [mediaReady, setMediaReady] = useState<{ questionId: string; ready: number; total: number } | null>(null);
   const [incomingInvite, setIncomingInvite] = useState<IncomingInvite | null>(null);
   const [namePrompt, setNamePrompt] = useState<NamePrompt | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -143,6 +147,7 @@ export function useSession(params: {
       setCurrentQuestion(q);
       setLockedAnswer(null);
       setLastResult(null);
+      setMediaReady(null);
     });
     socket.on('question:locked-for-you', (a) => setLockedAnswer(a));
     socket.on('question:revealed', (r) => {
@@ -157,6 +162,7 @@ export function useSession(params: {
     });
     socket.on('audio:directive', (d) => directiveCb.current?.(d));
     socket.on('audio:control', (c) => setAudioControl(c));
+    socket.on('media:ready-count', (p) => setMediaReady(p));
     socket.on('chat:message', (m) => setChat((prev) => [...prev.slice(-99), m]));
     socket.on('hint:revealed', ({ questionId, hint }) =>
       setRevealedHints((prev) => ({ ...prev, [questionId]: hint }))
@@ -192,6 +198,9 @@ export function useSession(params: {
   const revealHint = useCallback(async (questionId: string) => {
     const { hint } = await emitAck<{ hint: string }>(socketRef.current!, 'hint:reveal', { questionId });
     setRevealedHints((prev) => ({ ...prev, [questionId]: hint }));
+  }, []);
+  const markReady = useCallback((questionId: string) => {
+    socketRef.current?.emit('media:ready', { questionId }, () => {});
   }, []);
   const invite = useCallback(async (toParticipantId: string) => {
     await call('team:invite', { toParticipantId });
@@ -234,7 +243,7 @@ export function useSession(params: {
   return {
     ready, error, phase, started, joinCode, self, participants, teams, currentQuestion,
     lockedAnswer, lastResult, leaderboard, audioControl,
-    chat, sendChat, revealedHints, revealHint,
+    chat, sendChat, revealedHints, revealHint, mediaReady, markReady,
     incomingInvite, namePrompt, toast, clearToast, invite, respondInvite, nameTeam, leaveTeam, leaveQuiz,
     endedLeaderboard, lockAnswer, setAudioState, host,
   };

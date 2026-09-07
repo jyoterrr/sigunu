@@ -6,13 +6,13 @@ export const mediaSrc = (url: string) => (url.startsWith('http') ? url : `${MEDI
 
 /**
  * How this stage's video behaves:
- *  - 'preview'     (builder): native controls, local only, no sync.
- *  - 'host'        : native controls; the host's play/pause/seek broadcast to everyone
- *                    (via `onControl`) so participants follow. Host drives, doesn't follow.
- *  - 'participant' : NO controls — participants can't play/pause; the element just follows
- *                    the host's synchronized control messages.
+ *  - 'preview' (builder): native controls, local only, no sync.
+ *  - 'synced'  (host + participants): NO native controls — the element only follows the
+ *    host's play/pause control messages. The host drives it with explicit buttons that
+ *    the host page provides (gated on device readiness); everyone, host included, follows
+ *    the same broadcast so they stay together. No seeking (never skip buffered content).
  */
-export type VideoMode = 'preview' | 'host' | 'participant';
+export type VideoMode = 'preview' | 'synced';
 
 /**
  * Renders a question's visual media identically for the builder preview and every player
@@ -23,15 +23,13 @@ export type VideoMode = 'preview' | 'host' | 'participant';
 export function QuestionMediaStage({
   media,
   className,
-  videoMode = 'participant',
+  videoMode = 'synced',
   videoControl = null,
-  onVideoControl,
 }: {
   media: QuestionMedia[];
   className?: string;
   videoMode?: VideoMode;
   videoControl?: AudioControl | null;
-  onVideoControl?: (mediaId: string, action: 'play' | 'pause', positionSec: number) => void;
 }) {
   const images = media.filter((m) => m.kind === 'image');
   const video = media.find((m) => m.kind === 'video');
@@ -64,14 +62,7 @@ export function QuestionMediaStage({
             })}
         </div>
       )}
-      {video && (
-        <QuestionVideo
-          media={video}
-          mode={videoMode}
-          control={videoControl}
-          onControl={onVideoControl}
-        />
-      )}
+      {video && <QuestionVideo media={video} mode={videoMode} control={videoControl} />}
     </div>
   );
 }
@@ -80,19 +71,17 @@ function QuestionVideo({
   media,
   mode,
   control,
-  onControl,
 }: {
   media: QuestionMedia;
   mode: VideoMode;
   control: AudioControl | null;
-  onControl?: (mediaId: string, action: 'play' | 'pause', positionSec: number) => void;
 }) {
   const ref = useRef<HTMLVideoElement | null>(null);
 
-  // Participants follow the host's play/pause — no seeking (never skip buffered
-  // content), and it auto-starts (no button) once the browser is unlocked.
+  // Follow the host's play/pause — no seeking (never skip buffered content). Auto-starts
+  // once the browser is unlocked; the host page drives it with its own buttons.
   useEffect(() => {
-    if (mode !== 'participant') return;
+    if (mode !== 'synced') return;
     const el = ref.current;
     if (!el || !control || control.mediaId !== media.id) return;
     if (control.action === 'play') {
@@ -104,16 +93,6 @@ function QuestionVideo({
     }
   }, [control, media.id, mode]);
 
-  // Host broadcasts only play/pause (not seek), so participants play the whole clip.
-  const emit = () => {
-    if (mode !== 'host' || !onControl) return;
-    const el = ref.current;
-    if (!el) return;
-    onControl(media.id, el.paused ? 'pause' : 'play', el.currentTime);
-  };
-
-  const controllable = mode === 'preview' || mode === 'host';
-
   return (
     <div className="stage-video-wrap">
       <video
@@ -122,9 +101,7 @@ function QuestionVideo({
         src={mediaSrc(media.url)}
         poster={media.posterUrl}
         playsInline
-        controls={controllable}
-        onPlay={mode === 'host' ? emit : undefined}
-        onPause={mode === 'host' ? emit : undefined}
+        controls={mode === 'preview'}
       />
     </div>
   );

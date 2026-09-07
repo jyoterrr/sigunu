@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { installAutoplayUnlock } from '../lib/mediaAutoplay';
+import { installAutoplayUnlock, isAudioUnlocked } from '../lib/mediaAutoplay';
 import type { AudioState, AudioDirective } from '@sigunu/shared';
 import { creds } from '../lib/creds';
 import { useLiveKit } from '../livekit/useLiveKit';
@@ -62,9 +62,34 @@ export function Play() {
   );
   const hostId = session.participants.find((p) => p.role === 'quizmaster')?.id;
   const qmParticipant = lk.participants.find((p) => p.identity === hostId);
+  const selfParticipant = lk.participants.find((p) => p.identity === c?.participantId);
   const question = session.currentQuestion;
   const audios = useMemo(() => question?.media.filter((m) => m.kind === 'audio') ?? [], [question]);
   const hintText = question ? session.revealedHints[question.id] : undefined;
+
+  // Auto-acknowledge readiness (no button): once the current question's media is buffered
+  // AND this device's audio is unlocked, tell the host we'll play when they hit play.
+  const reportedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!question) return;
+    const hasMedia = question.media.some((m) => m.kind === 'audio' || m.kind === 'video');
+    if (!hasMedia) return;
+    reportedRef.current = null;
+    const check = () => {
+      if (reportedRef.current === question.id) return;
+      if (!isAudioUnlocked()) return;
+      const els = Array.from(document.querySelectorAll('audio, .stage-video-wrap video')) as HTMLMediaElement[];
+      const real = els.filter((el) => el.src && !el.src.startsWith('data:'));
+      if (real.length > 0 && real.every((el) => el.readyState >= 3)) {
+        reportedRef.current = question.id;
+        session.markReady(question.id);
+      }
+    };
+    const iv = setInterval(check, 400);
+    check();
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [question?.id]);
 
   const doLeaveQuiz = async () => {
     setConfirmLeave(false);
@@ -129,7 +154,7 @@ export function Play() {
                 <QuestionMediaStage
                   media={question.media}
                   className="mq-media"
-                  videoMode="participant"
+                  videoMode="synced"
                   videoControl={session.audioControl}
                 />
                 {audios.length > 0 && <div className="mq-audio-hint">🔊 audio round — the quiz master controls playback</div>}
@@ -147,12 +172,22 @@ export function Play() {
               </div>
 
               <div className="mq-lower">
-                <div className="qm-window">
-                  {qmParticipant ? (
-                    <VideoTile participant={qmParticipant} label="Quiz Master" />
-                  ) : (
-                    <div className="tile"><div className="tile-avatar">Q</div><span className="tile-label">Quiz Master</span></div>
-                  )}
+                <div className="mq-cams">
+                  <div className="qm-window">
+                    {qmParticipant ? (
+                      <VideoTile participant={qmParticipant} label="Quiz Master" />
+                    ) : (
+                      <div className="tile"><div className="tile-avatar">Q</div><span className="tile-label">Quiz Master</span></div>
+                    )}
+                  </div>
+                  {/* Your own camera, next to the quiz master (Round 2 request). */}
+                  <div className="self-window">
+                    {selfParticipant ? (
+                      <VideoTile participant={selfParticipant} isLocal label={session.self?.displayName ?? 'You'} />
+                    ) : (
+                      <div className="tile"><div className="tile-avatar">{(session.self?.displayName ?? 'Y').slice(0, 1).toUpperCase()}</div><span className="tile-label">You</span></div>
+                    )}
+                  </div>
                 </div>
                 <AnswerOptions
                   question={question}
