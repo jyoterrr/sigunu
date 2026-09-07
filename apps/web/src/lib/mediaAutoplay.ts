@@ -50,6 +50,20 @@ export function isAudioUnlocked(): boolean {
   return unlocked;
 }
 
+/**
+ * True on touch devices (phones/tablets), where a muted-tester "unlock" is NOT enough to
+ * let the host's command start the real, unmuted media — a deliberate gesture on the real
+ * element is required (strictly so on iOS). Such devices must ack via the "Get ready"
+ * button (which blesses the real element), not the passive auto-ack path. Desktops, which
+ * can play on command after any page interaction, auto-ack.
+ */
+export function needsExplicitGesture(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const touch = (navigator.maxTouchPoints ?? 0) > 0;
+  const mobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+  return touch || mobileUA;
+}
+
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
   (window as unknown as { __mp?: unknown }).__mp = {
     unlocked: () => unlocked,
@@ -74,6 +88,41 @@ function testUnlock(): void {
       /* still locked; a real gesture (below) will also flip it */
     });
   }
+}
+
+/**
+ * Called from an explicit "I'm ready" tap (a real gesture): "bless" the current question's
+ * real audio/video elements by briefly play→pause-ing them (unmuted, within the gesture)
+ * and kick off buffering. iOS requires this gesture-initiated play before it will let the
+ * host's later Play command start the element — so this makes host-triggered playback
+ * reliable across iOS/Android/laptop. Runs at currentTime 0 and resets, so it's just a
+ * blink, not the actual playback (which only the host starts).
+ */
+export function blessRealMedia(): void {
+  unlocked = true;
+  document.querySelectorAll('audio, .stage-video-wrap video').forEach((node) => {
+    const el = node as HTMLMediaElement;
+    if ((el.src || '').startsWith('data:')) return;
+    try {
+      el.load();
+    } catch {
+      /* ignore */
+    }
+    const p = el.play();
+    if (p && typeof p.then === 'function') {
+      p.then(() => {
+        el.pause();
+        try {
+          el.currentTime = 0;
+        } catch {
+          /* ignore */
+        }
+      }).catch(() => {
+        /* couldn't bless this element; host Play may still work via page activation */
+      });
+    }
+  });
+  testUnlock();
 }
 
 /** Install once on the participant page. Detects unlock immediately + on every tap. */

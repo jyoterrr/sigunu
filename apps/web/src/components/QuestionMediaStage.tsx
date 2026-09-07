@@ -78,6 +78,20 @@ function QuestionVideo({
 }) {
   const ref = useRef<HTMLVideoElement | null>(null);
 
+  // Force eager buffering in synced mode — mobile browsers otherwise lazy-load the video,
+  // so the host's first Play has to load-then-play (a stall). load() pre-warms it, matching
+  // the audio path, so playback starts cleanly on the host's command.
+  useEffect(() => {
+    if (mode !== 'synced') return;
+    const el = ref.current;
+    if (!el) return;
+    try {
+      el.load();
+    } catch {
+      /* ignore */
+    }
+  }, [media.id, mode]);
+
   // Follow the host's play/pause — no seeking (never skip buffered content). Auto-starts
   // once the browser is unlocked; the host page drives it with its own buttons.
   useEffect(() => {
@@ -100,6 +114,7 @@ function QuestionVideo({
         className="stage-video-el"
         src={mediaSrc(media.url)}
         poster={media.posterUrl}
+        preload="auto"
         playsInline
         controls={mode === 'preview'}
       />

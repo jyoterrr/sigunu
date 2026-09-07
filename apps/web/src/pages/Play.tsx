@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { installAutoplayUnlock, isAudioUnlocked } from '../lib/mediaAutoplay';
+import { installAutoplayUnlock, isAudioUnlocked, blessRealMedia, needsExplicitGesture } from '../lib/mediaAutoplay';
 import type { AudioState, AudioDirective } from '@sigunu/shared';
 import { creds } from '../lib/creds';
 import { useLiveKit } from '../livekit/useLiveKit';
@@ -67,33 +67,51 @@ export function Play() {
   const audios = useMemo(() => question?.media.filter((m) => m.kind === 'audio') ?? [], [question]);
   const hintText = question ? session.revealedHints[question.id] : undefined;
 
-  // Auto-acknowledge readiness (no button): once the current question's media is buffered
-  // AND this device's audio is unlocked, tell the host we'll play when they hit play.
-  const reportedRef = useRef<string | null>(null);
+  // Readiness handshake for media questions. Two paths reach the same "ready" state:
+  //  - Laptops: their browser already lets us play on command, so once audio is unlocked
+  //    (any prior interaction) and the media element exists, we auto-ack — no tap needed.
+  //  - Phones (esp. iOS): a *deliberate* gesture is required to bless the real media before
+  //    the host can start it. The "Get ready" button below provides that gesture, blessing
+  //    + pre-buffering the media, then acks. Either way the host sees this device as ready.
+  const questionHasMedia = !!question?.media.some((m) => m.kind === 'audio' || m.kind === 'video');
+  const [readyFor, setReadyFor] = useState<string | null>(null);
+  const isReady = !!question && readyFor === question.id;
   useEffect(() => {
-    if (!question) return;
-    const hasMedia = question.media.some((m) => m.kind === 'audio' || m.kind === 'video');
-    if (!hasMedia) return;
-    reportedRef.current = null;
+    if (!question || !questionHasMedia) return;
+    setReadyFor(null); // new question → not yet ready
+    // Only laptops/desktops auto-ack. On touch devices the "unlocked" flag comes from a
+    // muted tester, which does NOT make the real, unmuted element playable on command (iOS
+    // in particular) — so a phone must go through the "Get ready" button, which blesses the
+    // real element within a gesture. Auto-acking a phone would let it claim "ready" and then
+    // fail to play, which is exactly the bug we're fixing.
+    if (needsExplicitGesture()) return;
     const check = () => {
-      if (reportedRef.current === question.id) return;
-      // Ready = this device's audio is unlocked and the media element exists. We do NOT
-      // wait for a buffered readyState — mobile browsers lazy-load media and never report
-      // it, which would stop the device from ever acknowledging (laptops preload, so they
-      // acked instantly). Buffering is kicked off eagerly (audio load(), video preload).
-      if (!isAudioUnlocked()) return;
+      if (!isAudioUnlocked()) return false;
       const els = Array.from(document.querySelectorAll('audio, .stage-video-wrap video')) as HTMLMediaElement[];
       const real = els.filter((el) => el.src && !el.src.startsWith('data:'));
       if (real.length > 0) {
-        reportedRef.current = question.id;
         session.markReady(question.id);
+        setReadyFor(question.id);
+        return true;
       }
+      return false;
     };
-    const iv = setInterval(check, 400);
-    check();
+    if (check()) return;
+    const iv = setInterval(() => {
+      if (check()) clearInterval(iv);
+    }, 400);
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [question?.id]);
+  }, [question?.id, questionHasMedia]);
+
+  // Explicit "Get ready" tap: within this real gesture, bless + pre-buffer the media (the
+  // only reliable way to make host-triggered playback work on iOS), then ack to the host.
+  const onGetReady = () => {
+    if (!question) return;
+    blessRealMedia();
+    session.markReady(question.id);
+    setReadyFor(question.id);
+  };
 
   const doLeaveQuiz = async () => {
     setConfirmLeave(false);
@@ -161,7 +179,15 @@ export function Play() {
                   videoMode="synced"
                   videoControl={session.audioControl}
                 />
-                {audios.length > 0 && <div className="mq-audio-hint">🔊 audio round — the quiz master controls playback</div>}
+                {questionHasMedia && (
+                  isReady ? (
+                    <div className="mq-ready done">✓ Ready — the quiz master controls playback</div>
+                  ) : (
+                    <button className="mq-ready-btn" onClick={onGetReady}>
+                      ▶ Tap to get ready {audios.length > 0 ? '(enable audio)' : '(enable video)'}
+                    </button>
+                  )
+                )}
                 {question.hasHint && (
                   <div className="hint-box">
                     {hintText ? (
