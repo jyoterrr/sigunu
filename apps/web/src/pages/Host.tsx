@@ -63,8 +63,8 @@ export function Host() {
   const currentFull = questions.find((q) => q.id === current?.id) ?? null;
 
   // Media playback is gated on a majority of devices acknowledging they're ready (or the
-  // host's manual override). Laptops ack automatically; phones ack when the player taps the
-  // "Get ready" button, which also blesses + pre-buffers their media for reliable playback.
+  // host's manual override). Every device (laptop + phone) acks by tapping the "Get ready"
+  // button, which blesses + pre-buffers its media so host-triggered playback is reliable.
   const rc = session.mediaReady && session.mediaReady.questionId === current?.id ? session.mediaReady : null;
   const majorityReady = !rc || rc.total === 0 ? true : rc.ready >= Math.ceil(rc.total / 2);
   const canPlayMedia = mediaOverride || majorityReady;

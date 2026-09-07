@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { installAutoplayUnlock, isAudioUnlocked, blessRealMedia, needsExplicitGesture } from '../lib/mediaAutoplay';
+import { installAutoplayUnlock, blessRealMedia } from '../lib/mediaAutoplay';
 import type { AudioState, AudioDirective } from '@sigunu/shared';
 import { creds } from '../lib/creds';
 import { useLiveKit } from '../livekit/useLiveKit';
@@ -67,45 +67,20 @@ export function Play() {
   const audios = useMemo(() => question?.media.filter((m) => m.kind === 'audio') ?? [], [question]);
   const hintText = question ? session.revealedHints[question.id] : undefined;
 
-  // Readiness handshake for media questions. Two paths reach the same "ready" state:
-  //  - Laptops: their browser already lets us play on command, so once audio is unlocked
-  //    (any prior interaction) and the media element exists, we auto-ack — no tap needed.
-  //  - Phones (esp. iOS): a *deliberate* gesture is required to bless the real media before
-  //    the host can start it. The "Get ready" button below provides that gesture, blessing
-  //    + pre-buffering the media, then acks. Either way the host sees this device as ready.
+  // Readiness handshake for media questions. EVERY device (laptop, phone, tablet) taps the
+  // same "Get ready" button once per media question — it's a real user gesture, which is the
+  // one thing that reliably lets the host's later Play command start unmuted media across
+  // iOS/Android/desktop. The tap blesses + pre-buffers the real element and acks the host.
   const questionHasMedia = !!question?.media.some((m) => m.kind === 'audio' || m.kind === 'video');
   const [readyFor, setReadyFor] = useState<string | null>(null);
   const isReady = !!question && readyFor === question.id;
   useEffect(() => {
-    if (!question || !questionHasMedia) return;
-    setReadyFor(null); // new question → not yet ready
-    // Only laptops/desktops auto-ack. On touch devices the "unlocked" flag comes from a
-    // muted tester, which does NOT make the real, unmuted element playable on command (iOS
-    // in particular) — so a phone must go through the "Get ready" button, which blesses the
-    // real element within a gesture. Auto-acking a phone would let it claim "ready" and then
-    // fail to play, which is exactly the bug we're fixing.
-    if (needsExplicitGesture()) return;
-    const check = () => {
-      if (!isAudioUnlocked()) return false;
-      const els = Array.from(document.querySelectorAll('audio, .stage-video-wrap video')) as HTMLMediaElement[];
-      const real = els.filter((el) => el.src && !el.src.startsWith('data:'));
-      if (real.length > 0) {
-        session.markReady(question.id);
-        setReadyFor(question.id);
-        return true;
-      }
-      return false;
-    };
-    if (check()) return;
-    const iv = setInterval(() => {
-      if (check()) clearInterval(iv);
-    }, 400);
-    return () => clearInterval(iv);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [question?.id, questionHasMedia]);
+    setReadyFor(null); // new question → not ready until the player taps "Get ready"
+  }, [question?.id]);
 
   // Explicit "Get ready" tap: within this real gesture, bless + pre-buffer the media (the
-  // only reliable way to make host-triggered playback work on iOS), then ack to the host.
+  // only reliable way to make host-triggered playback work everywhere, iOS included), then
+  // ack to the host so it can count this device toward the majority.
   const onGetReady = () => {
     if (!question) return;
     blessRealMedia();

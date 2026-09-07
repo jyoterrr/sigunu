@@ -50,20 +50,6 @@ export function isAudioUnlocked(): boolean {
   return unlocked;
 }
 
-/**
- * True on touch devices (phones/tablets), where a muted-tester "unlock" is NOT enough to
- * let the host's command start the real, unmuted media — a deliberate gesture on the real
- * element is required (strictly so on iOS). Such devices must ack via the "Get ready"
- * button (which blesses the real element), not the passive auto-ack path. Desktops, which
- * can play on command after any page interaction, auto-ack.
- */
-export function needsExplicitGesture(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  const touch = (navigator.maxTouchPoints ?? 0) > 0;
-  const mobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
-  return touch || mobileUA;
-}
-
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
   (window as unknown as { __mp?: unknown }).__mp = {
     unlocked: () => unlocked,
