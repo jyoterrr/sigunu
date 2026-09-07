@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import type { AudioControl, QuestionMedia } from '@sigunu/shared';
 
 export const MEDIA_BASE = import.meta.env.VITE_API_URL || '';
 export const mediaSrc = (url: string) => (url.startsWith('http') ? url : `${MEDIA_BASE}${url}`);
-
-const SYNC_THRESHOLD_SEC = 0.4;
 
 /**
  * How this stage's video behaves:
@@ -90,44 +88,29 @@ function QuestionVideo({
   onControl?: (mediaId: string, action: 'play' | 'pause', positionSec: number) => void;
 }) {
   const ref = useRef<HTMLVideoElement | null>(null);
-  const [needsTap, setNeedsTap] = useState(false);
 
-  // Participants follow the host's synchronized control messages.
+  // Participants follow the host's play/pause — no seeking (never skip buffered
+  // content), and it auto-starts (no button) once the browser is unlocked.
   useEffect(() => {
     if (mode !== 'participant') return;
     const el = ref.current;
     if (!el || !control || control.mediaId !== media.id) return;
-    if (Math.abs(el.currentTime - control.positionSec) > SYNC_THRESHOLD_SEC) {
-      try {
-        el.currentTime = control.positionSec;
-      } catch {
-        /* ignore */
-      }
-    }
     if (control.action === 'play') {
-      el.play().then(() => setNeedsTap(false)).catch(() => setNeedsTap(true));
+      el.play().catch(() => {
+        /* still locked; a subsequent tap unlocks it via mediaAutoplay */
+      });
     } else {
       el.pause();
-      setNeedsTap(false);
     }
   }, [control, media.id, mode]);
 
-  // Host broadcasts its play/pause/seek so participants stay in sync.
+  // Host broadcasts only play/pause (not seek), so participants play the whole clip.
   const emit = () => {
     if (mode !== 'host' || !onControl) return;
     const el = ref.current;
     if (!el) return;
     onControl(media.id, el.paused ? 'pause' : 'play', el.currentTime);
   };
-  useEffect(() => {
-    if (mode !== 'host' || !onControl) return;
-    const iv = setInterval(() => {
-      const el = ref.current;
-      if (el && !el.paused) emit();
-    }, 3000);
-    return () => clearInterval(iv);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, onControl, media.id]);
 
   const controllable = mode === 'preview' || mode === 'host';
 
@@ -142,16 +125,7 @@ function QuestionVideo({
         controls={controllable}
         onPlay={mode === 'host' ? emit : undefined}
         onPause={mode === 'host' ? emit : undefined}
-        onSeeked={mode === 'host' ? emit : undefined}
       />
-      {needsTap && (
-        <button
-          className="video-tap-play"
-          onClick={() => ref.current?.play().then(() => setNeedsTap(false)).catch(() => {})}
-        >
-          ▶ Tap to play (synced)
-        </button>
-      )}
     </div>
   );
 }

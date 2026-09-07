@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { installAutoplayUnlock } from '../lib/mediaAutoplay';
 import type { AudioState, AudioDirective } from '@sigunu/shared';
 import { creds } from '../lib/creds';
 import { useLiveKit } from '../livekit/useLiveKit';
@@ -24,6 +25,10 @@ export function Play() {
   const [gridOpen, setGridOpen] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
+
+  // Unlock media autoplay on the participant's taps, so host-triggered audio/video
+  // starts automatically (browsers block programmatic play until a user gesture).
+  useEffect(() => installAutoplayUnlock(), []);
 
   const lk = useLiveKit(c?.livekit.url ?? null, c?.livekit.token ?? null);
 
