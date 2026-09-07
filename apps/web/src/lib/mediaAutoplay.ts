@@ -1,17 +1,19 @@
 /**
  * Browser autoplay policy requires a user gesture before media can play with sound. A
- * participant's device can only promise "I will play when the host hits play" once its
- * audio is UNLOCKED. We detect that automatically (no button):
+ * participant device only becomes able to play host-triggered audio/video after such a
+ * gesture. We establish and detect that WITHOUT ever touching the real question media —
+ * important because on iOS the `volume` property is ignored, so "silently" test-playing
+ * the real audio would actually blast it audibly on the user's tap, before the host says
+ * go. Instead:
  *
- *  - A tiny silent audio element is test-played on mount (to catch sticky activation
- *    carried over from the join tap) and on every subsequent tap. If it plays, audio is
- *    unlocked for this page.
- *  - Each real paused media element is also blessed (silently) on taps so it's playable.
+ *  - We play a tiny SILENT tester clip (on mount, for sticky activation carried over from
+ *    the join tap, and on every tap). That unlocks the page's audio.
+ *  - Any real user gesture also flips `unlocked` directly.
  *
- * `isAudioUnlocked()` lets the readiness reporter tell the host the device is good to go.
+ * The real audio/video is then played only by the host's play command (same path video
+ * already uses), never during unlocking — so tapping never starts the question audio.
  */
 
-// A ~50ms silent WAV as a data URI — loads with no network, safe to test-play.
 function silentWavUri(): string {
   const sr = 8000;
   const n = Math.floor(sr * 0.05);
@@ -43,7 +45,6 @@ let unlocked = false;
 let installed = false;
 let gestures = 0;
 let tester: HTMLAudioElement | null = null;
-const blessed = new WeakSet<HTMLMediaElement>();
 
 export function isAudioUnlocked(): boolean {
   return unlocked;
@@ -57,12 +58,12 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
   };
 }
 
+// Play only the SILENT tester — never the real question media.
 function testUnlock(): void {
-  if (unlocked) return;
   if (!tester) {
     tester = document.createElement('audio');
     tester.src = silentWavUri();
-    tester.volume = 0;
+    tester.muted = true; // muted so it's silent on every platform incl. iOS
   }
   const p = tester.play();
   if (p && typeof p.then === 'function') {
@@ -70,36 +71,9 @@ function testUnlock(): void {
       tester?.pause();
       unlocked = true;
     }).catch(() => {
-      /* still locked; another gesture will retry */
+      /* still locked; a real gesture (below) will also flip it */
     });
   }
-}
-
-function blessPausedMedia(): void {
-  document.querySelectorAll('audio,video').forEach((node) => {
-    const el = node as HTMLMediaElement;
-    if (blessed.has(el) || !el.paused) return;
-    const vol = el.volume;
-    el.volume = 0;
-    const p = el.play();
-    if (p && typeof p.then === 'function') {
-      p.then(() => {
-        el.pause();
-        try {
-          el.currentTime = 0;
-        } catch {
-          /* ignore */
-        }
-        el.volume = vol;
-        blessed.add(el);
-        unlocked = true;
-      }).catch(() => {
-        el.volume = vol;
-      });
-    } else {
-      el.volume = vol;
-    }
-  });
 }
 
 /** Install once on the participant page. Detects unlock immediately + on every tap. */
@@ -108,9 +82,8 @@ export function installAutoplayUnlock(): () => void {
   installed = true;
   const handler = () => {
     gestures++;
-    unlocked = true; // a real user gesture occurred → the page can play media
+    unlocked = true; // a real user gesture occurred → the page can play media on command
     testUnlock();
-    blessPausedMedia();
   };
   // Try immediately (sticky activation from the join tap may already allow playback).
   testUnlock();
